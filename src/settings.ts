@@ -116,7 +116,6 @@ export class WikiJSSettingTab extends PluginSettingTab {
 			.addDropdown(dropdown => dropdown
 				.addOption('ask', 'Ask each time')
 				.addOption('update', 'Always update existing page')
-				.addOption('create-new', 'Create new page with different name')
 				.setValue(this.plugin.settings.uploadBehavior || 'ask')
 				.onChange(async (value) => {
 					this.plugin.settings.uploadBehavior = value as 'ask' | 'update' | 'create-new';

@@ -265,6 +265,15 @@ export class UploadModal extends Modal {
 	}
 
 	private async confirmUpdate(existingPage: WikiJSPage): Promise<boolean> {
+		// Check upload behavior setting
+		const behavior = this.plugin.settings.uploadBehavior || 'ask';
+		
+		if (behavior === 'update') {
+			// Always update without asking
+			return true;
+		}
+		
+		// Default behavior: ask user
 		return new Promise((resolve) => {
 			const modal = new Modal(this.app);
 			modal.titleEl.setText('Page already exists');

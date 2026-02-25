@@ -43,11 +43,13 @@ export class WikiJSAPI {
 
 	async checkConnection(): Promise<boolean> {
 		try {
+			// users.profile throws AuthRequired when token is invalid or guest (id=2)
 			const query = `
 				{
-					pages {
-						list(limit: 1) {
+					users {
+						profile {
 							id
+							name
 						}
 					}
 				}

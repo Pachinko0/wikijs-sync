@@ -17,9 +17,21 @@
 
 ## 安装
 
+### 通过 BRAT 安装（推荐）
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat)（Beta Reviewers Auto-update Tester）是在插件上架 Obsidian 社区插件市场之前安装本插件的最简便方式。
+
+1. 在 Obsidian 社区插件中安装 **BRAT** 插件
+2. 打开 BRAT 设置，点击 **"Add Beta plugin"**
+3. 输入仓库地址：`https://github.com/luashiping/note-to-wikijs`
+4. 点击 **"Add Plugin"**，BRAT 会自动下载并安装
+5. 在 Obsidian 设置 > 社区插件 中启用 **Note to Wiki.js**
+
+BRAT 还会在新版本发布时自动更新插件。
+
 ### 手动安装
 
-1. 从 GitHub 下载最新版本
+1. 从 [GitHub Releases](https://github.com/luashiping/note-to-wikijs/releases) 下载最新版本
 2. 解压文件到你的 Obsidian 插件文件夹：`{vault}/.obsidian/plugins/note-to-wikijs/`
 3. 在 Obsidian 设置中启用插件
 

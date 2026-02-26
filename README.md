@@ -17,9 +17,21 @@ English | [简体中文](README.zh-CN.md)
 
 ## Installation
 
+### Install via BRAT (Recommended)
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) (Beta Reviewers Auto-update Tester) is the easiest way to install this plugin before it's available in the official Obsidian community plugins list.
+
+1. Install the **BRAT** plugin from the Obsidian Community Plugins
+2. Open BRAT settings and click **"Add Beta plugin"**
+3. Enter the repository URL: `https://github.com/luashiping/note-to-wikijs`
+4. Click **"Add Plugin"** — BRAT will download and install it automatically
+5. Enable **Note to Wiki.js** in Obsidian Settings > Community Plugins
+
+BRAT also keeps the plugin up to date automatically whenever a new release is published.
+
 ### Manual Installation
 
-1. Download the latest release from GitHub
+1. Download the latest release from [GitHub Releases](https://github.com/luashiping/note-to-wikijs/releases)
 2. Extract the files to your Obsidian plugins folder: `{vault}/.obsidian/plugins/note-to-wikijs/`
 3. Enable the plugin in Obsidian settings
 

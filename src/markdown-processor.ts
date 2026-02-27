@@ -244,12 +244,14 @@ export class MarkdownProcessor {
 		for (const pattern of patterns) {
 			let match;
 			while ((match = pattern.exec(content)) !== null) {
-				// 获取图片路径（根据不同格式，路径可能在不同的捕获组中）
-				let path = match[1];
-				if (pattern.source.includes('!\\[\\[')) {
-					// Obsidian 格式，路径在第一个捕获组
-					path = match[1];
-				} else if (pattern.source.includes('img')) {
+			// 获取图片路径（根据不同格式，路径可能在不同的捕获组中）
+			let path = match[1];
+			if (pattern.source.includes('!\\[\\[')) {
+				// Obsidian 格式，路径在第一个捕获组
+				// 第一个 Obsidian 模式将扩展名分到 match[2]，需要拼接完整文件名
+				// 避免文件名与文档名相同时，解析到 .md 文件而非图片文件
+				path = match[2] && match[2].startsWith('.') ? match[1] + match[2] : match[1];
+			} else if (pattern.source.includes('img')) {
 					// HTML 格式，路径在第一个捕获组
 					path = match[1];
 				} else {

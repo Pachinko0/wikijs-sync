@@ -82,41 +82,32 @@ export class WikiJSAPI {
 	async getPageByPath(path: string): Promise<WikiJSPage | null> {
 		// 去掉路径最前面的 /
 		const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
-		
+
+		// 使用 pages.list 直接查数据库，而非 pages.search（全文搜索）
+		// 搜索索引可能与数据库不同步，导致返回错误的页面 ID，更新到错误的文档
 		const query = `
-			query($path: String!) {
+			{
 				pages {
-					search(query: $path) {
-						results {
-							id
-							title
-							description
-							path
-							locale
-						}
+					list {
+						id
+						path
+						title
+						locale
 					}
 				}
 			}
 		`;
-		const result = await this.makeGraphQLRequest(query, { path: normalizedPath }) as {
+		const result = await this.makeGraphQLRequest(query) as {
 			pages: {
-				search: {
-					results: WikiJSPage[];
-				};
+				list: WikiJSPage[];
 			};
 		};
-		// return result.pages.single;
-		// 在搜索结果中查找完全匹配的 path
-		const exactMatch = result.pages.search.results.find(
+
+		const exactMatch = result.pages.list.find(
 			(page) => page.path === normalizedPath
 		);
 
 		return exactMatch || null;
-		// return exactMatch ? true : false;
-		// return {
-		// 	exists: !!exactMatch,
-		// 	page: exactMatch || undefined
-		// };
 	}
 
 	async createPage(
@@ -210,7 +201,6 @@ export class WikiJSAPI {
 	): Promise<UploadResult> {
 		// 去掉路径最前面的 /
 		const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
-		
 		const mutation = `
 			mutation($id: Int!, $path: String!, $title: String!, $content: String!, $description: String, $tags: [String!]) {
 				pages {

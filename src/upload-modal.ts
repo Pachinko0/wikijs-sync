@@ -220,6 +220,23 @@ export class UploadModal extends Modal {
 					this.uploadButton.disabled = false;
 					return;
 				}
+
+				// DRY-RUN: 验证页面匹配是否正确，不执行真实更新
+				// 确认无误后注释掉此块，取消下方 updatePage 的注释
+				// const DRY_RUN = true;
+				// if (DRY_RUN) {
+				// 	console.warn('[DRY-RUN] Would update page:');
+				// 	console.warn(`  ID:    ${pageId}`);
+				// 	console.warn(`  Title: ${existingPage.title}`);
+				// 	console.warn(`  Path:  ${existingPage.path}`);
+				// 	console.warn(`  → New title: ${this.titleInput.trim()}`);
+				// 	console.warn(`  → New path:  ${this.pathInput.trim()}`);
+				// 	new Notice(`[DRY-RUN] Would update: "${existingPage.title}" (ID: ${pageId}, path: ${existingPage.path})`);
+				// 	this.uploadButton.textContent = 'Upload';
+				// 	this.uploadButton.disabled = false;
+				// 	return;
+				// }
+
 				result = await this.api.updatePage(
 					pageId,
 					this.pathInput.trim(),

@@ -90,8 +90,9 @@ export class MarkdownProcessor {
 		// 如果提供了页面路径，则将图片放在相同的完整路径下
 			let imageUrl = '';
 			if (pagePath) {
-				// 去除前导斜杠
-				let cleanPath = pagePath.startsWith('/') ? pagePath.substring(1) : pagePath;
+			// 去除前导斜杠，并转为小写
+			// Wiki.js 对资源文件夹 slug 强制小写，路径需与实际存储保持一致
+			let cleanPath = (pagePath.startsWith('/') ? pagePath.substring(1) : pagePath).toLowerCase();
 				
 			// 保留完整路径，包括页面名称
 			// 例如：notes/coco/my-page -> /_assets/notes/coco/my-page/image.png

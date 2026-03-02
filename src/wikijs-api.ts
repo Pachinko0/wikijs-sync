@@ -307,7 +307,15 @@ export class WikiJSAPI {
 	 */
 	async findFolderIdByName(parentFolderId: number, folderName: string): Promise<number | null> {
 		const folders = await this.getAssetFolders(parentFolderId);
-		const folder = folders.find(f => f.slug === folderName || f.name === folderName);
+		// console.log('folderName', folderName);
+		const lowerName = folderName.toLowerCase();
+		// console.log('lowerName', lowerName);
+		// console.log('slug', folders.map(f => f.slug));
+		// console.log('name', folders.map(f => f.name));
+		// Wiki.js 将 slug 自动转为小写，用大小写不敏感比较避免找不到已存在的文件夹
+		const folder = folders.find(f =>
+			f.slug.toLowerCase() === lowerName || f.name.toLowerCase() === lowerName
+		);
 		return folder ? folder.id : null;
 	}
 
@@ -380,7 +388,8 @@ export class WikiJSAPI {
 	 */
 	async ensureAssetFolderPath(path: string): Promise<number> {
 		// 从路径中提取所有文件夹部分，保留完整路径
-		const folderParts = path.split('/').filter(p => p.trim());
+		// Wiki.js 对 slug 强制小写，提前统一处理避免大小写导致的层级丢失
+		const folderParts = path.split('/').filter(p => p.trim()).map(p => p.toLowerCase());
 		if (folderParts.length === 0) {
 			return 0; // 根目录
 		}

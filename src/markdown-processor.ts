@@ -153,32 +153,36 @@ export class MarkdownProcessor {
 	 * Generate a Wiki.js compatible path from the file name
 	 */
 	generatePath(fileName: string, folderPath?: string): string {
-		// Remove .md extension
-		let path = fileName.replace(/\.md$/, '');
-		
-		// Convert to lowercase and replace spaces with hyphens
-		path = path.toLowerCase().replace(/\s+/g, '-');
-		
-		// Remove date prefixes (YYYY-MM-DD-)
-		path = path.replace(/^\d{4}-\d{2}-\d{2}-/, '');
-		
-		// Remove special characters except hyphens and underscores
-		path = path.replace(/[^a-z0-9\-_]/g, '');
-		
-		// Add folder path if provided
-		if (folderPath && folderPath !== '/') {
-			const cleanFolderPath = folderPath
+		const sanitizeSegment = (segment: string): string => {
+			return segment
 				.toLowerCase()
+				// Replace spaces with hyphens
 				.replace(/\s+/g, '-')
-				.replace(/[^a-z0-9\-_/]/g, '')
-				.replace(/^\/+|\/+$/g, ''); // Remove leading/trailing slashes
-			
-			if (cleanFolderPath) {
-				path = `${cleanFolderPath}/${path}`;
-			}
+				// Replace periods (reserved for file extensions)
+				.replace(/\./g, '-')
+				// Remove remaining unsafe URL characters, keep only Unicode letters/numbers, hyphens, underscores
+				.replace(/[^\p{L}\p{N}\-_]/gu, '')
+				// Collapse multiple consecutive hyphens
+				.replace(/-{2,}/g, '-')
+				// Remove leading/trailing hyphens
+				.replace(/^-+|-+$/g, '');
+		};
+
+		// Remove .md extension and sanitize file name
+		const slug = sanitizeSegment(fileName.replace(/\.md$/, ''));
+
+		if (!folderPath || folderPath === '/') {
+			return slug;
 		}
-		
-		return path;
+
+		// Split folder path by slashes, sanitize each segment, drop empty ones
+		const cleanFolderPath = folderPath
+			.split('/')
+			.map(sanitizeSegment)
+			.filter(Boolean)
+			.join('/');
+
+		return cleanFolderPath ? `${cleanFolderPath}/${slug}` : slug;
 	}
 
 	/**

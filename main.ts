@@ -1,5 +1,5 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, Setting, TFile, TFolder } from 'obsidian';
-import { WikiJSSettings } from './src/types';
+import { WikiJSSettings, NavigationItemInput } from './src/types';
 import { WikiJSSettingTab, DEFAULT_SETTINGS } from './src/settings';
 import { UploadModal } from './src/upload-modal';
 import { WikiJSAPI } from './src/wikijs-api';
@@ -514,6 +514,16 @@ class BulkUploadModal extends Modal {
 		const errorCount = Object.values(this.uploadProgress).filter(status => status === 'error').length;
 		const skippedCount = Object.values(this.uploadProgress).filter(status => status === 'skipped').length;
 
+		// Sync navigation if enabled and there were successful uploads
+		if (this.plugin.settings.syncNavigation && successCount > 0) {
+			try {
+				await this.syncNavigationTree(api, this.files.filter(file => this.uploadProgress[file.path] === 'success'));
+			} catch (error) {
+				console.error('Navigation sync failed:', error as any);
+				// Don't fail the entire upload if navigation sync fails
+			}
+		}
+
 		uploadButton.textContent = `Completed (${successCount} success, ${errorCount} errors, ${skippedCount} skipped)`;
 
 		this.plugin.showNotice(`Bulk upload completed: ${successCount} successful, ${errorCount} errors, ${skippedCount} skipped`);
@@ -555,6 +565,125 @@ class BulkUploadModal extends Modal {
 				new Notice(`Failed to upload image ${image.name}: ${(error as any).message}`);
 			}
 		}
+	}
+
+	private async syncNavigationTree(api: WikiJSAPI, files: TFile[]): Promise<void> {
+		// Check if navigation sync is enabled
+		if (!this.plugin.settings.syncNavigation) {
+			console.debug('Navigation sync is disabled');
+			return;
+		}
+
+		try {
+			console.debug('Starting navigation tree sync...');
+
+			// Get current navigation tree
+			let currentTree: NavigationItemInput[] = [];
+			try {
+				const response = await api.getNavigationTree();
+				currentTree = response.navigation.tree;
+				console.debug('Current navigation tree:', currentTree);
+			} catch (error) {
+				console.warn('Failed to get current navigation tree:', error as any);
+				// Continue with empty tree
+			}
+
+			// Build navigation items from uploaded files
+			const newNavigationItems = this.buildNavigationFromFiles(files);
+
+			// Merge with existing tree (simple approach: replace items for same paths)
+			// For now, we'll just use the new items
+			// TODO: Implement proper merging logic
+			const mergedTree = this.mergeNavigationTrees(currentTree, newNavigationItems);
+
+			// Update navigation tree
+			const result = await api.updateNavigationTree(mergedTree);
+
+			if (result.navigation.updateTree.responseResult.succeeded) {
+				console.debug('Navigation tree updated successfully');
+				new Notice('Navigation menu synchronized successfully');
+			} else {
+				console.error('Failed to update navigation tree:', result.navigation.updateTree.responseResult.message);
+				new Notice(`Failed to sync navigation: ${result.navigation.updateTree.responseResult.message}`);
+			}
+		} catch (error) {
+			console.error('Error syncing navigation tree:', error as any);
+			new Notice(`Error syncing navigation: ${(error as any).message}`);
+		}
+	}
+
+	private buildNavigationFromFiles(files: TFile[]): NavigationItemInput[] {
+		const items: NavigationItemInput[] = [];
+		const processor = new MarkdownProcessor(this.plugin.settings);
+
+		// Track folder paths we've already created items for
+		const createdFolders = new Set<string>();
+
+		for (const file of files) {
+			// Generate Wiki.js path for the file
+			const pagePath = processor.generatePath(file.name, file.parent?.path);
+
+			// Create folder items for each level of the path
+			const pathSegments = pagePath.split('/');
+
+			// Build folder hierarchy
+			let currentPath = '';
+			for (let i = 0; i < pathSegments.length - 1; i++) {
+				const segment = pathSegments[i];
+				currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+
+				if (!createdFolders.has(currentPath)) {
+					items.push({
+						id: `folder-${currentPath}`,
+						kind: 'folder',
+						label: this.formatLabel(segment),
+						targetType: undefined,
+						target: undefined,
+						icon: undefined
+					});
+					createdFolders.add(currentPath);
+				}
+			}
+
+			// Create page item
+			const pageName = pathSegments[pathSegments.length - 1];
+			items.push({
+				id: `page-${pagePath}`,
+				kind: 'page',
+				label: this.formatLabel(pageName),
+				targetType: 'page',
+				target: `/${pagePath}`,
+				icon: undefined
+			});
+		}
+
+		return items;
+	}
+
+	private mergeNavigationTrees(currentTree: NavigationItemInput[], newItems: NavigationItemInput[]): NavigationItemInput[] {
+		// Simple implementation: replace items with same id
+		const merged = [...currentTree];
+		const newIds = new Set(newItems.map(item => item.id));
+
+		// Remove existing items that will be replaced
+		for (let i = merged.length - 1; i >= 0; i--) {
+			if (newIds.has(merged[i].id)) {
+				merged.splice(i, 1);
+			}
+		}
+
+		// Add new items
+		merged.push(...newItems);
+
+		return merged;
+	}
+
+	private formatLabel(text: string): string {
+		// Convert slug to readable label (e.g., "my-page" -> "My Page")
+		return text
+			.replace(/[-_]/g, ' ')
+			.replace(/\b\w/g, char => char.toUpperCase())
+			.trim();
 	}
 
 	private updateFileStatusInModal(filePath: string) {

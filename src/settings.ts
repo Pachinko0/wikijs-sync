@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS: WikiJSSettings = {
 	locale: 'en',
 	bulkUploadBehavior: 'overwrite',
 	bulkUploadImages: true,
+	syncNavigation: false,
 };
 
 export class WikiJSSettingTab extends PluginSettingTab {
@@ -156,6 +157,16 @@ export class WikiJSSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.bulkUploadImages ?? true)
 				.onChange(async (value) => {
 					this.plugin.settings.bulkUploadImages = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Sync navigation menu')
+			.setDesc('When enabled, the Wiki.js navigation menu will be updated to match the Obsidian folder structure after bulk upload')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.syncNavigation ?? false)
+				.onChange(async (value) => {
+					this.plugin.settings.syncNavigation = value;
 					await this.plugin.saveSettings();
 				}));
 

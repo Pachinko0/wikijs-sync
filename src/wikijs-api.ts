@@ -1,5 +1,5 @@
 import { requestUrl } from 'obsidian';
-import { WikiJSSettings, WikiJSCreatePageMutation, WikiJSUpdatePageMutation, WikiJSPageListResponse, UploadResult, WikiJSPage } from './types';
+import { WikiJSSettings, WikiJSCreatePageMutation, WikiJSUpdatePageMutation, WikiJSPageListResponse, UploadResult, WikiJSPage, NavigationTreeResponse, NavigationUpdateResponse, NavigationItemInput } from './types';
 
 export class WikiJSAPI {
 	private settings: WikiJSSettings;
@@ -517,6 +517,48 @@ export class WikiJSAPI {
 			console.error('Asset upload error:', error);
 			throw new Error(`Error uploading asset: ${error.message}`);
 		}
+	}
+
+	/**
+	 * Get the current navigation tree from Wiki.js
+	 */
+	async getNavigationTree(): Promise<NavigationTreeResponse> {
+		const query = `
+			{
+				navigation {
+					tree {
+						id
+						kind
+						label
+						icon
+						targetType
+						target
+					}
+				}
+			}
+		`;
+		return await this.makeGraphQLRequest(query) as NavigationTreeResponse;
+	}
+
+	/**
+	 * Update the navigation tree in Wiki.js
+	 */
+	async updateNavigationTree(tree: NavigationItemInput[]): Promise<NavigationUpdateResponse> {
+		const mutation = `
+			mutation UpdateNavigationTree($tree: [NavigationItemInput]!) {
+				navigation {
+					updateTree(tree: $tree) {
+						responseResult {
+							succeeded
+							errorCode
+							slug
+							message
+						}
+					}
+				}
+			}
+		`;
+		return await this.makeGraphQLRequest(mutation, { tree }) as NavigationUpdateResponse;
 	}
 }
 

@@ -7,6 +7,7 @@ export interface WikiJSSettings {
 	uploadBehavior?: 'ask' | 'update' | 'create-new';
 	bulkUploadBehavior?: 'overwrite' | 'skip' | 'ask';
 	bulkUploadImages?: boolean;
+	syncNavigation?: boolean;
 }
 
 export interface WikiJSPageResponse {
@@ -63,4 +64,42 @@ export interface UploadResult {
 	message: string;
 	pageId?: number;
 	pageUrl?: string;
+}
+
+// Navigation types
+export interface NavigationItem {
+	id: string;
+	kind: string;
+	label?: string;
+	icon?: string;
+	targetType?: string;
+	target?: string;
+}
+
+export interface NavigationItemInput {
+	id: string;
+	kind: string;
+	label?: string;
+	icon?: string;
+	targetType?: string;
+	target?: string;
+}
+
+export interface NavigationTreeResponse {
+	navigation: {
+		tree: NavigationItem[];
+	};
+}
+
+export interface NavigationUpdateResponse {
+	navigation: {
+		updateTree: {
+			responseResult: {
+				succeeded: boolean;
+				errorCode: number;
+				slug: string;
+				message: string;
+			};
+		};
+	};
 }

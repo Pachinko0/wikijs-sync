@@ -15,7 +15,7 @@ A fork of [luashiping/note-to-wikijs](https://github.com/luashiping/note-to-wiki
 - 🔗 Automatic link conversion  
 - 📋 Rich upload modal with content preview  
 - 🎯 Right-click context menu integration  
-- ✨ Improved UI for easier navigation and configuration  
+- ✨ Improved UI for easier navigation and error handling, with extra configuration  
 
 ---
 

@@ -46,6 +46,7 @@ jspm_packages/
 main.js
 *.js.map
 dist/
+dist
 
 # Obsidian
 data.json

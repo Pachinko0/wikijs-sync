@@ -8,6 +8,9 @@ export const DEFAULT_SETTINGS: WikiJSSettings = {
 	apiToken: '',
 	autoConvertLinks: true,
 	preserveObsidianSyntax: false,
+	locale: 'en',
+	bulkUploadBehavior: 'overwrite',
+	bulkUploadImages: true,
 };
 
 export class WikiJSSettingTab extends PluginSettingTab {
@@ -105,6 +108,17 @@ export class WikiJSSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		new Setting(containerEl)
+			.setName('Locale')
+			.setDesc('Locale code for new pages (e.g., en, zh, fr). Default: en')
+			.addText(text => text
+				.setPlaceholder('en')
+				.setValue(this.plugin.settings.locale || 'en')
+				.onChange(async (value) => {
+					this.plugin.settings.locale = value.trim() || 'en';
+					await this.plugin.saveSettings();
+				}));
+
 		// Advanced settings section
 		new Setting(containerEl)
 			.setName('Advanced')
@@ -119,6 +133,29 @@ export class WikiJSSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.uploadBehavior || 'ask')
 				.onChange(async (value) => {
 					this.plugin.settings.uploadBehavior = value as 'ask' | 'update' | 'create-new';
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Bulk upload behavior')
+			.setDesc('Choose what happens when uploading multiple notes and a page already exists in wiki.js')
+			.addDropdown(dropdown => dropdown
+				.addOption('overwrite', 'Overwrite existing pages')
+				.addOption('skip', 'Skip existing pages')
+				.addOption('ask', 'Ask for each page')
+				.setValue(this.plugin.settings.bulkUploadBehavior || 'overwrite')
+				.onChange(async (value) => {
+					this.plugin.settings.bulkUploadBehavior = value as 'overwrite' | 'skip' | 'ask';
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Upload images in bulk upload')
+			.setDesc('When enabled, images referenced in notes will be uploaded to Wiki.js assets')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.bulkUploadImages ?? true)
+				.onChange(async (value) => {
+					this.plugin.settings.bulkUploadImages = value;
 					await this.plugin.saveSettings();
 				}));
 

@@ -80,8 +80,8 @@ export class WikiJSAPI {
 	}
 
 	async getPageByPath(path: string): Promise<WikiJSPage | null> {
-		// 去掉路径最前面的 /
-		const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
+		// 去掉路径最前面的 / 并转为小写
+		const normalizedPath = (path.startsWith('/') ? path.substring(1) : path).toLowerCase();
 
 		// 使用 pages.list 直接查数据库，而非 pages.search（全文搜索）
 		// 搜索索引可能与数据库不同步，导致返回错误的页面 ID，更新到错误的文档
@@ -104,7 +104,7 @@ export class WikiJSAPI {
 		};
 
 		const exactMatch = result.pages.list.find(
-			(page) => page.path === normalizedPath
+			(page) => page.path.toLowerCase() === normalizedPath
 		);
 
 		return exactMatch || null;
@@ -151,6 +151,8 @@ export class WikiJSAPI {
 			}`.trim();
 
 		try {
+			// Normalize path: remove leading slash and convert to lowercase for Wiki.js compatibility
+			const normalizedPath = (path.startsWith('/') ? path.substring(1) : path).toLowerCase();
 
 			const variables = {
 				content,
@@ -158,8 +160,8 @@ export class WikiJSAPI {
 				editor: 'markdown',
 				isPrivate: false,
 				isPublished: true,
-				locale: 'zh',
-				path,
+				locale: this.settings.locale || 'en',
+				path: normalizedPath,
 				publishEndDate: '',
 				publishStartDate: '',
 				scriptCss: "",
@@ -175,7 +177,7 @@ export class WikiJSAPI {
 					success: true,
 					message: 'Page created successfully',
 					pageId: result.pages.create.page.id,
-					pageUrl: `${this.settings.wikiUrl}/${path}`
+					pageUrl: `${this.settings.wikiUrl}/${normalizedPath}`
 				};
 			} else {
 				return {
@@ -199,8 +201,8 @@ export class WikiJSAPI {
 		description?: string,
 		tags?: string[]
 	): Promise<UploadResult> {
-		// 去掉路径最前面的 /
-		const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
+		// 去掉路径最前面的 / 并转为小写
+		const normalizedPath = (path.startsWith('/') ? path.substring(1) : path).toLowerCase();
 		const mutation = `
 			mutation($id: Int!, $path: String!, $title: String!, $content: String!, $description: String, $tags: [String!]) {
 				pages {

@@ -87,6 +87,10 @@
     padding: 10px;
 }
 
+.bulk-upload-settings {
+    margin-bottom: 20px;
+}
+
 .bulk-upload-item {
     display: flex;
     justify-content: space-between;
@@ -116,6 +120,10 @@
 
 .upload-status.error {
     color: var(--color-red);
+}
+
+.upload-status.skipped {
+    color: var(--color-orange);
 }
 
 .progress-container {

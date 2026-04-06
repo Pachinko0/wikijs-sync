@@ -58,3 +58,11 @@ data.json
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Claude Code specific files
+.claude/
+CLAUDE.md
+esbuild.log
+
+# IDE files
+.idea/

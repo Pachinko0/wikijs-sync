@@ -1,9 +1,10 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, TFile } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, Setting, TFile, TFolder } from 'obsidian';
 import { WikiJSSettings } from './src/types';
 import { WikiJSSettingTab, DEFAULT_SETTINGS } from './src/settings';
 import { UploadModal } from './src/upload-modal';
 import { WikiJSAPI } from './src/wikijs-api';
 import { MarkdownProcessor } from './src/markdown-processor';
+import { ImageTagProcessor } from './src/image-tag-processor';
 
 export default class NoteToWikiJSPlugin extends Plugin {
 	settings: WikiJSSettings;
@@ -36,14 +37,13 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		});
 
 		// Add command to bulk upload files
-	// TODO: Re-enable after adding image upload support for bulk upload
-	// this.addCommand({
-	// 	id: 'bulk-upload-to-wikijs',
-	// 	name: 'Bulk upload folder to Wiki.js',
-	// 	callback: () => {
-	// 		this.bulkUploadFolder();
-	// 	}
-	// });
+		this.addCommand({
+			id: 'bulk-upload-to-wikijs',
+			name: 'Bulk upload folder to Wiki.js',
+			callback: () => {
+				this.bulkUploadFolder();
+			}
+		});
 
 		// Add context menu item for files
 		this.registerEvent(
@@ -55,6 +55,15 @@ export default class NoteToWikiJSPlugin extends Plugin {
 							.setIcon('upload')
 							.onClick(async () => {
 								await this.uploadFile(file);
+							});
+					});
+				} else if (file instanceof TFolder) {
+					menu.addItem((item) => {
+						item
+							.setTitle('Upload folder to wiki.js')
+							.setIcon('upload')
+							.onClick(async () => {
+								await this.uploadFolder(file);
 							});
 					});
 				}
@@ -140,36 +149,64 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		modal.open();
 	}
 
-	// TODO: Re-enable bulk upload after adding image upload support
-	// private async bulkUploadFolder() {
-	// 	const folders = this.app.vault.getAllLoadedFiles()
-	// 		.filter(file => 'children' in file)
-	// 		.map(folder => folder.path);
+	private async bulkUploadFolder() {
+		const folders = this.app.vault.getAllLoadedFiles()
+			.filter(file => 'children' in file)
+			.map(folder => folder.path);
 
-	// 	if (folders.length === 0) {
-	// 		this.showNotice('No folders found in vault');
-	// 		return;
-	// 	}
+		if (folders.length === 0) {
+			this.showNotice('No folders found in vault');
+			return;
+		}
 
-	// 	// Create folder selection modal
-	// 	const modal = new FolderSelectionModal(this.app, folders, async (folderPath) => {
-	// 		await this.uploadFolderContents(folderPath);
-	// 	});
-	// 	modal.open();
-	// }
+		// Create folder selection modal
+		const modal = new FolderSelectionModal(this.app, folders, async (folderPath) => {
+			await this.uploadFolderContents(folderPath);
+		});
+		modal.open();
+	}
 
-	// private async uploadFolderContents(folderPath: string) {
-	// 	const files = this.app.vault.getMarkdownFiles()
-	// 		.filter(file => file.path.startsWith(folderPath));
+	private async uploadFolderContents(folderPath: string) {
+		const files = this.app.vault.getMarkdownFiles()
+			.filter(file => file.path.startsWith(folderPath));
 
-	// 	if (files.length === 0) {
-	// 		this.showNotice(`No markdown files found in folder: ${folderPath}`);
-	// 		return;
-	// 	}
+		if (files.length === 0) {
+			this.showNotice(`No markdown files found in folder: ${folderPath}`);
+			return;
+		}
 
-	// 	const modal = new BulkUploadModal(this.app, this, files);
-	// 	modal.open();
-	// }
+		const modal = new BulkUploadModal(this.app, this, files);
+		modal.open();
+	}
+
+	private async uploadFolder(folder: TFolder) {
+		// Validate settings
+		if (!this.settings.wikiUrl || !this.settings.apiToken) {
+			this.showNotice('Please configure Wiki.js settings first (URL and API Token)');
+			return;
+		}
+
+		// Test connection before uploading
+		const api = new WikiJSAPI(this.settings);
+		const isConnected = await api.checkConnection();
+
+		if (!isConnected) {
+			this.showNotice('Cannot connect to Wiki.js. Please check your settings.');
+			return;
+		}
+
+		// Get all markdown files in folder recursively
+		const files = this.app.vault.getMarkdownFiles()
+			.filter(file => file.path.startsWith(folder.path));
+
+		if (files.length === 0) {
+			this.showNotice(`No markdown files found in folder: ${folder.path}`);
+			return;
+		}
+
+		const modal = new BulkUploadModal(this.app, this, files);
+		modal.open();
+	}
 }
 
 // File Selection Modal
@@ -253,14 +290,20 @@ class FolderSelectionModal extends Modal {
 class BulkUploadModal extends Modal {
 	plugin: NoteToWikiJSPlugin;
 	files: TFile[];
-	private uploadProgress: { [key: string]: 'pending' | 'uploading' | 'success' | 'error' } = {};
+	private conflictResolution: 'overwrite' | 'skip' | 'ask';
+	private uploadImages: boolean;
+	private uploadProgress: { [key: string]: 'pending' | 'uploading' | 'success' | 'error' | 'skipped' } = {};
 	private uploadResults: { [key: string]: string } = {};
+	private imageProcessor: ImageTagProcessor;
 
 	constructor(app: App, plugin: NoteToWikiJSPlugin, files: TFile[]) {
 		super(app);
 		this.plugin = plugin;
 		this.files = files;
-		
+		this.conflictResolution = this.plugin.settings.bulkUploadBehavior || 'overwrite';
+		this.uploadImages = this.plugin.settings.bulkUploadImages ?? true;
+		this.imageProcessor = new ImageTagProcessor(app);
+
 		// Initialize progress tracking
 		this.files.forEach(file => {
 			this.uploadProgress[file.path] = 'pending';
@@ -273,15 +316,38 @@ class BulkUploadModal extends Modal {
 
 		contentEl.createEl('h2', { text: `Bulk upload (${this.files.length} files)` });
 
+		// Settings
+		const settingsDiv = contentEl.createDiv('bulk-upload-settings');
+		new Setting(settingsDiv)
+			.setName('If page exists')
+			.setDesc('Choose what to do when a page already exists in Wiki.js')
+			.addDropdown(dropdown => dropdown
+				.addOption('overwrite', 'Overwrite existing page')
+				.addOption('skip', 'Skip existing page')
+				.addOption('ask', 'Ask for each page')
+				.setValue(this.conflictResolution)
+				.onChange(value => {
+					this.conflictResolution = value as 'overwrite' | 'skip' | 'ask';
+				}));
+
+		new Setting(settingsDiv)
+			.setName('Upload images')
+			.setDesc('Upload images referenced in notes to Wiki.js assets')
+			.addToggle(toggle => toggle
+				.setValue(this.uploadImages)
+				.onChange(value => {
+					this.uploadImages = value;
+				}));
+
 		// File list
 		const fileListDiv = contentEl.createDiv('bulk-upload-list');
 
 		this.files.forEach(file => {
 			const fileItem = fileListDiv.createDiv('bulk-upload-item');
-			
+
 			fileItem.createEl('span', { text: file.name });
 			const status = fileItem.createEl('span', { cls: 'upload-status' });
-			
+
 			this.updateFileStatus(file.path, status);
 		});
 
@@ -309,8 +375,8 @@ class BulkUploadModal extends Modal {
 		const result = this.uploadResults[filePath];
 		
 		// Remove all status classes
-		statusElement.removeClass('pending', 'uploading', 'success', 'error');
-		
+		statusElement.removeClass('pending', 'uploading', 'success', 'error', 'skipped');
+
 		switch (status) {
 			case 'pending':
 				statusElement.textContent = '⏳ pending';
@@ -331,6 +397,13 @@ class BulkUploadModal extends Modal {
 					statusElement.title = result;
 				}
 				break;
+			case 'skipped':
+				statusElement.textContent = '⏭️ skipped';
+				statusElement.addClass('skipped');
+				if (result) {
+					statusElement.title = result;
+				}
+				break;
 		}
 	}
 
@@ -347,7 +420,7 @@ class BulkUploadModal extends Modal {
 		for (const file of this.files) {
 			this.uploadProgress[file.path] = 'uploading';
 			this.updateFileStatusInModal(file.path);
-			
+
 			try {
 				const content = await this.app.vault.read(file);
 				const path = processor.generatePath(file.name, file.parent?.path);
@@ -360,6 +433,37 @@ class BulkUploadModal extends Modal {
 					existingPage = await api.getPageByPath(path);
 				} catch (error) {
 					existingPage = null;
+				}
+
+				// Conflict resolution logic
+				if (existingPage) {
+					switch (this.conflictResolution) {
+						case 'skip':
+							this.uploadProgress[file.path] = 'skipped';
+							this.uploadResults[file.path] = `Page already exists at "${path}"`;
+							completed++;
+							const progress = (completed / total) * 100;
+							progressFill.style.width = `${progress}%`;
+							this.updateFileStatusInModal(file.path);
+							continue; // Skip to next file
+						case 'ask':
+							// For bulk upload, we treat 'ask' as skip with a notice
+							this.uploadProgress[file.path] = 'skipped';
+							this.uploadResults[file.path] = `Page already exists at "${path}" (ask mode skipped)`;
+							completed++;
+							const progressAsk = (completed / total) * 100;
+							progressFill.style.width = `${progressAsk}%`;
+							this.updateFileStatusInModal(file.path);
+							continue;
+						case 'overwrite':
+							// Proceed to update
+							break;
+					}
+				}
+
+				// Upload images if enabled
+				if (this.uploadImages && processed.images && processed.images.length > 0) {
+					await this.uploadImagesForPage(api, processed.images, path, file);
 				}
 
 				let result;
@@ -396,22 +500,61 @@ class BulkUploadModal extends Modal {
 
 			} catch (error) {
 				this.uploadProgress[file.path] = 'error';
-				this.uploadResults[file.path] = error.message;
+				this.uploadResults[file.path] = (error as any).message;
 			}
 
 			completed++;
 			const progress = (completed / total) * 100;
 			progressFill.style.width = `${progress}%`;
-			
+
 			this.updateFileStatusInModal(file.path);
 		}
 
 		const successCount = Object.values(this.uploadProgress).filter(status => status === 'success').length;
 		const errorCount = Object.values(this.uploadProgress).filter(status => status === 'error').length;
+		const skippedCount = Object.values(this.uploadProgress).filter(status => status === 'skipped').length;
 
-		uploadButton.textContent = `Completed (${successCount} success, ${errorCount} errors)`;
-		
-		this.plugin.showNotice(`Bulk upload completed: ${successCount} successful, ${errorCount} errors`);
+		uploadButton.textContent = `Completed (${successCount} success, ${errorCount} errors, ${skippedCount} skipped)`;
+
+		this.plugin.showNotice(`Bulk upload completed: ${successCount} successful, ${errorCount} errors, ${skippedCount} skipped`);
+	}
+
+	private async uploadImagesForPage(api: WikiJSAPI, images: Array<{ name: string; path: string }>, pagePath: string, sourceFile: TFile): Promise<void> {
+		// Create asset folder structure based on page path
+		let targetFolderId = 0;
+		try {
+			targetFolderId = await api.ensureAssetFolderPath(pagePath.trim());
+			console.debug(`Asset folder prepared, folderId: ${targetFolderId}`);
+		} catch (error) {
+			console.warn('Failed to create asset folder structure:', error as any);
+			// Continue with root directory
+			targetFolderId = 0;
+		}
+
+		// Resolve image files
+		const imageFileMap = this.imageProcessor.resolveImageFiles(images, sourceFile);
+
+		for (const image of images) {
+			try {
+				console.debug('Processing image:', image.name, 'Original path:', image.path);
+				const file = imageFileMap.get(image.path);
+				if (file instanceof TFile) {
+					console.debug('Found file:', file.path, 'File name:', file.name);
+					const arrayBuffer = await this.app.vault.readBinary(file);
+					// Upload image to Wiki.js, using actual file name (with extension)
+					await api.uploadAsset(file.name, arrayBuffer, targetFolderId);
+					// Success notice (optional)
+					new Notice(`✅ ${file.name} uploaded successfully`);
+					console.debug(`✅ Successfully uploaded: ${file.name}`);
+				} else {
+					console.error(`File not found: ${image.name} (path: ${image.path})`);
+					new Notice(`Image file not found: ${image.name}`);
+				}
+			} catch (error) {
+				console.error(`Failed to upload image ${image.name}:`, error as any);
+				new Notice(`Failed to upload image ${image.name}: ${(error as any).message}`);
+			}
+		}
 	}
 
 	private updateFileStatusInModal(filePath: string) {

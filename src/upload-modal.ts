@@ -20,6 +20,7 @@ export class UploadModal extends Modal {
 	private content: string;
 	private images: Array<{ name: string; path: string }>;
 	private uploadButton: HTMLButtonElement;
+	private initializationPromise: Promise<void>;
 
 	constructor(app: App, plugin: NoteToWikiJSPlugin, file: TFile) {
 		super(app);
@@ -28,24 +29,33 @@ export class UploadModal extends Modal {
 		this.processor = new MarkdownProcessor(plugin.settings);
 		this.api = new WikiJSAPI(plugin.settings);
 		this.imageProcessor = new ImageTagProcessor(app);
-		
-		// Initialize form fields
-		this.initializeFields().catch((error) => {
+
+		// Initialize all form fields synchronously with default values
+		// For notes in folders: use folder path only (e.g., "zones/ideas" for Zones/Ideas/Beach.md)
+		// For root notes: use filename (e.g., "meeting-notes" for Meeting Notes.md)
+		const folderPath = this.processor.generateFolderPath(this.file.parent?.path);
+		this.pathInput = folderPath || this.processor.generatePath(this.file.name, '');
+		this.titleInput = this.file.name.replace(/\.md$/, ''); // Default title from filename
+		this.tagsInput = '';
+		this.descriptionInput = '';
+		this.content = '';
+		this.images = [];
+
+		// Refine fields asynchronously (extract title from content, tags, etc.)
+		this.initializationPromise = this.initializeFields().catch((error) => {
 			console.error('Failed to initialize upload modal:', error);
 			new Notice(`Failed to read file: ${error.message}`);
 			this.close();
+			throw error; // Re-throw so onOpen() can handle it
 		});
 	}
 
 	private async initializeFields() {
 		const content = await this.app.vault.read(this.file);
-		
-		// 先生成页面路径
-		this.pathInput = this.processor.generatePath(this.file.name, this.file.parent?.path);
-		
+
 		// 初始处理 markdown 内容（不传入 pagePath，因为用户可能会修改路径）
 		const processed = this.processor.processMarkdown(content, this.file.name);
-		
+
 		this.titleInput = processed.title;
 		this.content = content; // 保存原始内容，在上传时根据最终路径重新处理
 		this.images = processed.images;
@@ -53,10 +63,25 @@ export class UploadModal extends Modal {
 		this.descriptionInput = '';
 	}
 
-	onOpen() {
+	async onOpen() {
 		const { contentEl } = this;
 		contentEl.empty();
 
+		// Show loading indicator while initializing
+		contentEl.createEl('h2', { text: 'Upload to wiki.js' });
+		const loadingDiv = contentEl.createDiv('loading-indicator');
+		loadingDiv.createEl('p', { text: 'Loading note content...' });
+
+		try {
+			// Wait for initialization to complete
+			await this.initializationPromise;
+		} catch (error) {
+			// Initialization failed, modal will be closed by the catch handler in constructor
+			return;
+		}
+
+		// Clear loading and build the form
+		contentEl.empty();
 		contentEl.createEl('h2', { text: 'Upload to wiki.js' });
 
 		// File info
@@ -98,11 +123,11 @@ export class UploadModal extends Modal {
 
 		// Buttons
 		const buttonDiv = contentEl.createDiv('modal-button-container');
-		
+
 		const cancelButton = buttonDiv.createEl('button', { text: 'Cancel' });
 		cancelButton.onclick = () => this.close();
 
-		this.uploadButton = buttonDiv.createEl('button', { 
+		this.uploadButton = buttonDiv.createEl('button', {
 			text: 'Upload',
 			cls: 'mod-cta'
 		});

@@ -3,7 +3,10 @@ export interface WikiJSSettings {
 	apiToken: string;
 	autoConvertLinks: boolean;
 	preserveObsidianSyntax: boolean;
+	locale?: string;
 	uploadBehavior?: 'ask' | 'update' | 'create-new';
+	bulkUploadBehavior?: 'overwrite' | 'skip' | 'ask';
+	bulkUploadImages?: boolean;
 }
 
 export interface WikiJSPageResponse {

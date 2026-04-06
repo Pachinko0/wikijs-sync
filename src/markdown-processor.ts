@@ -186,6 +186,39 @@ export class MarkdownProcessor {
 	}
 
 	/**
+	 * Generate just the folder path from Obsidian folder structure
+	 */
+	generateFolderPath(folderPath?: string): string {
+		const sanitizeSegment = (segment: string): string => {
+			return segment
+				.toLowerCase()
+				// Replace spaces with hyphens
+				.replace(/\s+/g, '-')
+				// Replace periods (reserved for file extensions)
+				.replace(/\./g, '-')
+				// Remove remaining unsafe URL characters, keep only Unicode letters/numbers, hyphens, underscores
+				.replace(/[^\p{L}\p{N}\-_]/gu, '')
+				// Collapse multiple consecutive hyphens
+				.replace(/-{2,}/g, '-')
+				// Remove leading/trailing hyphens
+				.replace(/^-+|-+$/g, '');
+		};
+
+		if (!folderPath || folderPath === '/') {
+			return '';
+		}
+
+		// Split folder path by slashes, sanitize each segment, drop empty ones
+		const cleanFolderPath = folderPath
+			.split('/')
+			.map(sanitizeSegment)
+			.filter(Boolean)
+			.join('/');
+
+		return cleanFolderPath || '';
+	}
+
+	/**
 	 * Extract tags from content (YAML frontmatter or inline tags)
 	 */
 	extractTags(content: string): string[] {

@@ -6,7 +6,7 @@ A fork of [luashiping/note-to-wikijs](https://github.com/luashiping/note-to-wiki
 
 ## Features
 
-- 🔄 **Bidirectional Sync** – Keep your Obsidian notes and Wiki.js pages in sync automatically  
+- 🔄 **TODO: Bidirectional Sync** – Keep your Obsidian notes and Wiki.js pages in sync automatically  
 - 🗂️ **Bulk Upload** – Upload entire folders with notes and images in one go  
 - 📤 Upload individual notes to Wiki.js  
 - 🖼️ Automatic image upload to Wiki.js assets  

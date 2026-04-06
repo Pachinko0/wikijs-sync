@@ -1,4 +1,4 @@
-# Note to Wiki.js Plus
+# Wikijs Sync
 
 A fork of [luashiping/note-to-wikijs](https://github.com/luashiping/note-to-wikijs) with **enhanced functionality**, including bidirectional sync, bulk uploads, and a more intuitive UI.
 

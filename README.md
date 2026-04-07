@@ -221,7 +221,16 @@ See [DEVELOPMENT.md](./DEVELOPMENT.md) for detailed development setup, including
 
 ## Changelog
 
-### 1.0.1 (Current)
+### 1.0.2 (Current)
+- Fixed folder sync conflicts and improved path normalization
+- Added folder conflict check to prevent file/folder name collisions
+- Rewrote resolveFolderPath to find best existing folder prefix
+- Updated sanitizeSegment to normalize underscores to hyphens
+- Fixed path comparison in findObsidianFileByWikiPath
+- Added enhanced debug logging for sync troubleshooting
+- Improved sync performance with folder reuse optimization
+
+### 1.0.1
 - Added navigation menu sync feature
 - Fixed locale foreign key constraint by making locale configurable
 - Enhanced link conversion with proper locale and folder structure support

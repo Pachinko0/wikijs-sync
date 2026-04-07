@@ -195,13 +195,6 @@ Ensure your Wiki.js API token has the following permissions:
 1. Ensure "Auto Convert Links" is enabled in settings
 2. Check that wikilinks reference existing notes in your vault
 3. Verify locale setting matches your Wiki.js instance
-4. Images not uploading? Check that image files exist in your vault and paths are correct
-
-### Auto-Sync Not Working
-
-1. Enable "Auto-sync vault" in advanced settings
-2. Adjust "Auto-sync delay" if syncs are too frequent or infrequent
-3. Check console for errors during auto-sync attempts
 
 ---
 

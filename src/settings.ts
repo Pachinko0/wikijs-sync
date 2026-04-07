@@ -11,7 +11,9 @@ export const DEFAULT_SETTINGS: WikiJSSettings = {
 	locale: 'en',
 	bulkUploadBehavior: 'overwrite',
 	bulkUploadImages: true,
-	syncNavigation: false,
+	autoSyncEnabled: false,
+	autoSyncDelay: 5, // seconds
+	autoSyncImages: false,
 };
 
 export class WikiJSSettingTab extends PluginSettingTab {
@@ -160,13 +162,43 @@ export class WikiJSSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+
+		// Auto-sync settings
 		new Setting(containerEl)
-			.setName('Sync navigation menu')
-			.setDesc('When enabled, the Wiki.js navigation menu will be updated to match the Obsidian folder structure after bulk upload')
+			.setName('Auto-sync vault')
+			.setDesc('Automatically sync modified notes to Wiki.js')
 			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.syncNavigation ?? false)
+				.setValue(this.plugin.settings.autoSyncEnabled ?? false)
 				.onChange(async (value) => {
-					this.plugin.settings.syncNavigation = value;
+					this.plugin.settings.autoSyncEnabled = value;
+					await this.plugin.saveSettings();
+					// Re-initialize auto-sync when setting changes
+					this.plugin.initializeAutoSync();
+				}));
+
+		new Setting(containerEl)
+			.setName('Auto-sync delay')
+			.setDesc('Delay in seconds before syncing a modified note (prevents too frequent updates)')
+			.addText(text => text
+				.setPlaceholder('5')
+				.setValue(this.plugin.settings.autoSyncDelay?.toString() || '5')
+				.onChange(async (value) => {
+					const delay = parseInt(value.trim());
+					if (!isNaN(delay) && delay > 0) {
+						this.plugin.settings.autoSyncDelay = delay;
+						await this.plugin.saveSettings();
+						// Re-initialize auto-sync with new delay
+						this.plugin.initializeAutoSync();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName('Auto-sync images')
+			.setDesc('When enabled, images referenced in notes will also be uploaded during auto-sync')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoSyncImages ?? false)
+				.onChange(async (value) => {
+					this.plugin.settings.autoSyncImages = value;
 					await this.plugin.saveSettings();
 				}));
 
@@ -186,5 +218,9 @@ export class WikiJSSettingTab extends PluginSettingTab {
 		const noteP = usageDiv.createEl('p');
 		noteP.createEl('strong', { text: 'Note: ' });
 		noteP.appendText('The plugin will automatically convert Obsidian-specific syntax to be compatible with Wiki.js unless you enable "Preserve Obsidian syntax".');
+
+		const autoSyncNote = usageDiv.createEl('p');
+		autoSyncNote.createEl('strong', { text: 'Auto-sync: ' });
+		autoSyncNote.appendText('When enabled, modified notes will be automatically synced to Wiki.js after a configurable delay. Enable in Advanced settings.');
 	}
 }

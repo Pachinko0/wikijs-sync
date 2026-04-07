@@ -1,5 +1,5 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, Setting, TFile, TFolder } from 'obsidian';
-import { WikiJSSettings, NavigationItemInput } from './src/types';
+import { WikiJSSettings } from './src/types';
 import { WikiJSSettingTab, DEFAULT_SETTINGS } from './src/settings';
 import { UploadModal } from './src/upload-modal';
 import { WikiJSAPI } from './src/wikijs-api';
@@ -8,6 +8,9 @@ import { ImageTagProcessor } from './src/image-tag-processor';
 
 export default class NoteToWikiJSPlugin extends Plugin {
 	settings: WikiJSSettings;
+	private autoSyncTimeout: number | null = null;
+	private filesToSync: Set<TFile> = new Set();
+	private autoSyncEventListeners: Array<() => void> = [];
 
 	async onload() {
 		await this.loadSettings();
@@ -17,6 +20,12 @@ export default class NoteToWikiJSPlugin extends Plugin {
 			void this.uploadCurrentNote();
 		});
 		ribbonIconEl.addClass('wikijs-ribbon-icon');
+
+		// Add sync ribbon icon
+		const syncRibbonIconEl = this.addRibbonIcon('download', 'Sync current note from wiki.js', (evt: MouseEvent) => {
+			void this.syncCurrentNoteFromWikiJS();
+		});
+		syncRibbonIconEl.addClass('wikijs-ribbon-icon');
 
 		// Add command to upload current note
 		this.addCommand({
@@ -45,6 +54,43 @@ export default class NoteToWikiJSPlugin extends Plugin {
 			}
 		});
 
+		// Add command to force sync everything
+		this.addCommand({
+			id: 'force-sync-everything',
+			name: 'Force sync everything (overwrite all)',
+			callback: () => {
+				void this.forceSyncEverything();
+			}
+		});
+
+		// Add command to sync new files only
+		this.addCommand({
+			id: 'sync-new-only',
+			name: 'Sync new files only (skip existing)',
+			callback: () => {
+				void this.syncNewOnly();
+			}
+		});
+
+		// Add command to sync current note from Wiki.js
+		this.addCommand({
+			id: 'sync-current-note-from-wikijs',
+			name: 'Sync current note from Wiki.js',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+				void this.syncCurrentNoteFromWikiJS();
+			}
+		});
+
+		// Add command to sync all notes from Wiki.js
+		this.addCommand({
+			id: 'sync-all-from-wikijs',
+			name: 'Sync all notes from Wiki.js',
+			callback: () => {
+				void this.syncAllFromWikiJS();
+			}
+		});
+
+
 		// Add context menu item for files
 		this.registerEvent(
 			this.app.workspace.on('file-menu', (menu, file) => {
@@ -55,6 +101,14 @@ export default class NoteToWikiJSPlugin extends Plugin {
 							.setIcon('upload')
 							.onClick(async () => {
 								await this.uploadFile(file);
+							});
+					});
+					menu.addItem((item) => {
+						item
+							.setTitle('Sync from wiki.js')
+							.setIcon('download')
+							.onClick(async () => {
+								await this.syncFileFromWikiJS(file);
 							});
 					});
 				} else if (file instanceof TFolder) {
@@ -78,10 +132,15 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		statusBarItemEl.setText('Wiki.js ready');
 		statusBarItemEl.addClass('wikijs-status-bar');
 
+		// Initialize auto-sync
+		this.initializeAutoSync();
+
 		console.debug('Note to Wiki.js plugin loaded');
 	}
 
 	onunload() {
+		// Clean up auto-sync
+		this.cleanupAutoSync();
 		console.debug('Note to Wiki.js plugin unloaded');
 	}
 
@@ -95,6 +154,237 @@ export default class NoteToWikiJSPlugin extends Plugin {
 
 	showNotice(message: string, duration: number = 5000) {
 		new Notice(message, duration);
+	}
+
+	/**
+	 * Initialize or re-initialize auto-sync based on settings
+	 */
+	initializeAutoSync() {
+		// Clear existing auto-sync setup
+		this.cleanupAutoSync();
+
+		// Check if auto-sync is enabled
+		if (!this.settings.autoSyncEnabled) {
+			console.debug('Auto-sync is disabled');
+			return;
+		}
+
+		const delay = (this.settings.autoSyncDelay || 5) * 1000; // Convert to milliseconds
+		console.debug(`Initializing auto-sync with ${delay}ms delay`);
+
+		// Listen for file modifications
+		const modifyListener = this.app.vault.on('modify', (file) => {
+			if (file instanceof TFile && file.extension === 'md') {
+				console.debug('Auto-sync: file modified', file.path);
+				this.scheduleFileSync(file, delay);
+			}
+		});
+
+		// Listen for file creations
+		const createListener = this.app.vault.on('create', (file) => {
+			if (file instanceof TFile && file.extension === 'md') {
+				console.debug('Auto-sync: file created', file.path);
+				this.scheduleFileSync(file, delay);
+			}
+		});
+
+		// Listen for file renames
+		const renameListener = this.app.vault.on('rename', (file, oldPath) => {
+			if (file instanceof TFile && file.extension === 'md') {
+				console.debug('Auto-sync: file renamed', oldPath, '->', file.path);
+				this.scheduleFileSync(file, delay);
+			}
+		});
+
+		// Store listeners for cleanup
+		this.autoSyncEventListeners.push(() => this.app.vault.offref(modifyListener));
+		this.autoSyncEventListeners.push(() => this.app.vault.offref(createListener));
+		this.autoSyncEventListeners.push(() => this.app.vault.offref(renameListener));
+	}
+
+	/**
+	 * Clean up auto-sync event listeners and timeouts
+	 */
+	private cleanupAutoSync() {
+		// Clear any pending timeout
+		if (this.autoSyncTimeout !== null) {
+			window.clearTimeout(this.autoSyncTimeout);
+			this.autoSyncTimeout = null;
+		}
+
+		// Clear files to sync
+		this.filesToSync.clear();
+
+		// Remove all event listeners
+		for (const cleanup of this.autoSyncEventListeners) {
+			cleanup();
+		}
+		this.autoSyncEventListeners = [];
+	}
+
+	/**
+	 * Schedule a file for sync after delay
+	 */
+	private scheduleFileSync(file: TFile, delay: number) {
+		// Add file to sync set
+		this.filesToSync.add(file);
+
+		// Clear existing timeout
+		if (this.autoSyncTimeout !== null) {
+			window.clearTimeout(this.autoSyncTimeout);
+		}
+
+		// Set new timeout
+		this.autoSyncTimeout = window.setTimeout(() => {
+			this.processAutoSync();
+		}, delay);
+	}
+
+	/**
+	 * Process all files scheduled for sync
+	 */
+	private async processAutoSync() {
+		if (this.filesToSync.size === 0) {
+			return;
+		}
+
+		const files = Array.from(this.filesToSync);
+		this.filesToSync.clear();
+		this.autoSyncTimeout = null;
+
+		console.debug(`Auto-syncing ${files.length} modified file(s)`);
+
+		// Validate settings
+		if (!this.settings.wikiUrl || !this.settings.apiToken) {
+			this.showNotice('Cannot auto-sync: Wiki.js settings not configured');
+			return;
+		}
+
+		// Test connection
+		const api = new WikiJSAPI(this.settings);
+		try {
+			const isConnected = await api.checkConnection();
+			if (!isConnected) {
+				this.showNotice('Cannot auto-sync: Unable to connect to Wiki.js');
+				return;
+			}
+		} catch (error) {
+			console.error('Auto-sync connection check failed:', error);
+			this.showNotice('Auto-sync failed: Connection error');
+			return;
+		}
+
+		// Process each file
+		let successCount = 0;
+		let errorCount = 0;
+
+		for (const file of files) {
+			try {
+				await this.autoSyncFile(file, api);
+				successCount++;
+			} catch (error) {
+				console.error(`Auto-sync failed for ${file.path}:`, error);
+				errorCount++;
+			}
+		}
+
+		if (successCount > 0 || errorCount > 0) {
+			this.showNotice(`Auto-sync completed: ${successCount} successful, ${errorCount} failed`);
+		}
+	}
+
+	/**
+	 * Sync a single file to Wiki.js
+	 */
+	private async autoSyncFile(file: TFile, api: WikiJSAPI) {
+		console.debug(`Auto-syncing file: ${file.path}`);
+
+		// Read file content
+		const content = await this.app.vault.read(file);
+		const processor = new MarkdownProcessor(this.settings, undefined);
+		const path = processor.generatePath(file.name, file.parent?.path);
+		console.debug('Auto-sync: generated path:', path, 'for file:', file.path);
+		const processed = processor.processMarkdown(content, file.name, path);
+		const tags = processor.extractTags(content);
+
+		// Check if page exists
+		let existingPage;
+		try {
+			console.debug('Auto-sync: checking if page exists at path:', path);
+			existingPage = await api.getPageByPath(path);
+			if (existingPage) {
+				console.debug('Auto-sync: page exists, ID:', existingPage.id);
+			} else {
+				console.debug('Auto-sync: page does not exist, will create new');
+			}
+		} catch (error) {
+			console.debug('Auto-sync: error checking page existence:', error);
+			existingPage = null;
+		}
+
+		// Upload images if enabled
+		if (this.settings.autoSyncImages && processed.images && processed.images.length > 0) {
+			console.debug('Auto-sync: uploading', processed.images.length, 'images');
+			const imageProcessor = new ImageTagProcessor(this.app);
+			const imageFileMap = imageProcessor.resolveImageFiles(processed.images, file);
+
+			// Create asset folder structure
+			let targetFolderId = 0;
+			try {
+				targetFolderId = await api.ensureAssetFolderPath(path.trim());
+				console.debug('Auto-sync: asset folder ID:', targetFolderId);
+			} catch (error) {
+				console.warn('Failed to create asset folder structure:', error as any);
+			}
+
+			// Upload each image
+			for (const image of processed.images) {
+				try {
+					const imageFile = imageFileMap.get(image.path);
+					if (imageFile instanceof TFile) {
+						const arrayBuffer = await this.app.vault.readBinary(imageFile);
+						console.debug('Auto-sync: uploading image:', imageFile.name);
+						await api.uploadAsset(imageFile.name, arrayBuffer, targetFolderId);
+					}
+				} catch (error) {
+					console.warn(`Failed to upload image ${image.name}:`, error as any);
+				}
+			}
+		}
+
+		// Update or create page
+		let result;
+		if (existingPage) {
+			console.debug('Auto-sync: updating existing page');
+			const pageId = Number(existingPage.id);
+			if (isNaN(pageId)) {
+				throw new Error(`Invalid page ID: ${existingPage.id}`);
+			}
+			result = await api.updatePage(
+				pageId,
+				path,
+				processed.title,
+				processed.content,
+				undefined,
+				tags
+			);
+		} else {
+			console.debug('Auto-sync: creating new page');
+			result = await api.createPage(
+				path,
+				processed.title,
+				processed.content,
+				undefined,
+				tags
+			);
+		}
+
+		if (!result.success) {
+			console.error('Auto-sync: page operation failed:', result.message);
+			throw new Error(`Failed to sync page: ${result.message}`);
+		}
+
+		console.debug(`Auto-sync successful for ${file.path}`);
 	}
 
 	private async uploadCurrentNote() {
@@ -206,6 +496,693 @@ export default class NoteToWikiJSPlugin extends Plugin {
 
 		const modal = new BulkUploadModal(this.app, this, files);
 		modal.open();
+	}
+
+	/**
+	 * Force sync all markdown files in the vault (overwrite existing pages)
+	 */
+	async forceSyncEverything(): Promise<void> {
+		// Validate settings
+		if (!this.settings.wikiUrl || !this.settings.apiToken) {
+			this.showNotice('Please configure Wiki.js settings first (URL and API Token)');
+			return;
+		}
+
+		// Test connection before uploading
+		const api = new WikiJSAPI(this.settings);
+		const isConnected = await api.checkConnection();
+
+		if (!isConnected) {
+			this.showNotice('Cannot connect to Wiki.js. Please check your settings.');
+			return;
+		}
+
+		// Get all markdown files in vault
+		const files = this.app.vault.getMarkdownFiles();
+
+		if (files.length === 0) {
+			this.showNotice('No markdown files found in vault');
+			return;
+		}
+
+		this.showNotice(`Starting force sync of ${files.length} files...`);
+
+		const processor = new MarkdownProcessor(this.settings, undefined);
+		let successCount = 0;
+		let errorCount = 0;
+
+		for (let i = 0; i < files.length; i++) {
+			const file = files[i];
+			try {
+				this.showNotice(`Processing ${i + 1}/${files.length}: ${file.name}`, 2000);
+
+				// Read file content
+				const content = await this.app.vault.read(file);
+				const path = processor.generatePath(file.name, file.parent?.path);
+				const processed = processor.processMarkdown(content, file.name, path);
+				const tags = processor.extractTags(content);
+
+				// Check if page exists
+				let existingPage;
+				try {
+					existingPage = await api.getPageByPath(path);
+				} catch (error) {
+					existingPage = null;
+				}
+
+				// Upload images if enabled
+				if (this.settings.bulkUploadImages && processed.images && processed.images.length > 0) {
+					const imageProcessor = new ImageTagProcessor(this.app);
+					const imageFileMap = imageProcessor.resolveImageFiles(processed.images, file);
+
+					// Create asset folder structure
+					let targetFolderId = 0;
+					try {
+						targetFolderId = await api.ensureAssetFolderPath(path.trim());
+					} catch (error) {
+						console.warn('Failed to create asset folder structure:', error as any);
+					}
+
+					// Upload each image
+					for (const image of processed.images) {
+						try {
+							const imageFile = imageFileMap.get(image.path);
+							if (imageFile instanceof TFile) {
+								const arrayBuffer = await this.app.vault.readBinary(imageFile);
+								await api.uploadAsset(imageFile.name, arrayBuffer, targetFolderId);
+							}
+						} catch (error) {
+							console.warn(`Failed to upload image ${image.name}:`, error as any);
+						}
+					}
+				}
+
+				// Always overwrite existing page (force sync)
+				let result;
+				if (existingPage) {
+					const pageId = Number(existingPage.id);
+					if (isNaN(pageId)) {
+						throw new Error(`Invalid page ID: ${existingPage.id}`);
+					}
+					result = await api.updatePage(
+						pageId,
+						path,
+						processed.title,
+						processed.content,
+						undefined,
+						tags
+					);
+				} else {
+					result = await api.createPage(
+						path,
+						processed.title,
+						processed.content,
+						undefined,
+						tags
+					);
+				}
+
+				if (result.success) {
+					successCount++;
+				} else {
+					errorCount++;
+					console.error(`Failed to sync ${file.path}: ${result.message}`);
+				}
+			} catch (error) {
+				errorCount++;
+				console.error(`Error syncing ${file.path}:`, error);
+			}
+		}
+
+		this.showNotice(`Force sync completed: ${successCount} successful, ${errorCount} failed`);
+
+	}
+
+	/**
+	 * Sync only new markdown files (skip existing pages)
+	 */
+	async syncNewOnly(): Promise<void> {
+		// Validate settings
+		if (!this.settings.wikiUrl || !this.settings.apiToken) {
+			this.showNotice('Please configure Wiki.js settings first (URL and API Token)');
+			return;
+		}
+
+		// Test connection before uploading
+		const api = new WikiJSAPI(this.settings);
+		const isConnected = await api.checkConnection();
+
+		if (!isConnected) {
+			this.showNotice('Cannot connect to Wiki.js. Please check your settings.');
+			return;
+		}
+
+		// Get all markdown files in vault
+		const files = this.app.vault.getMarkdownFiles();
+
+		if (files.length === 0) {
+			this.showNotice('No markdown files found in vault');
+			return;
+		}
+
+		this.showNotice(`Starting new-only sync of ${files.length} files...`);
+
+		const processor = new MarkdownProcessor(this.settings, undefined);
+		let successCount = 0;
+		let errorCount = 0;
+		let skippedCount = 0;
+
+		for (let i = 0; i < files.length; i++) {
+			const file = files[i];
+			try {
+				this.showNotice(`Processing ${i + 1}/${files.length}: ${file.name}`, 2000);
+
+				// Read file content
+				const content = await this.app.vault.read(file);
+				const path = processor.generatePath(file.name, file.parent?.path);
+				const processed = processor.processMarkdown(content, file.name, path);
+				const tags = processor.extractTags(content);
+
+				// Check if page exists
+				let existingPage;
+				try {
+					existingPage = await api.getPageByPath(path);
+				} catch (error) {
+					existingPage = null;
+				}
+
+				// Skip if page already exists
+				if (existingPage) {
+					skippedCount++;
+					console.debug(`Skipping existing page: ${path}`);
+					continue;
+				}
+
+				// Upload images if enabled
+				if (this.settings.bulkUploadImages && processed.images && processed.images.length > 0) {
+					const imageProcessor = new ImageTagProcessor(this.app);
+					const imageFileMap = imageProcessor.resolveImageFiles(processed.images, file);
+
+					// Create asset folder structure
+					let targetFolderId = 0;
+					try {
+						targetFolderId = await api.ensureAssetFolderPath(path.trim());
+					} catch (error) {
+						console.warn('Failed to create asset folder structure:', error as any);
+					}
+
+					// Upload each image
+					for (const image of processed.images) {
+						try {
+							const imageFile = imageFileMap.get(image.path);
+							if (imageFile instanceof TFile) {
+								const arrayBuffer = await this.app.vault.readBinary(imageFile);
+								await api.uploadAsset(imageFile.name, arrayBuffer, targetFolderId);
+							}
+						} catch (error) {
+							console.warn(`Failed to upload image ${image.name}:`, error as any);
+						}
+					}
+				}
+
+				// Create new page
+				const result = await api.createPage(
+					path,
+					processed.title,
+					processed.content,
+					undefined,
+					tags
+				);
+
+				if (result.success) {
+					successCount++;
+				} else {
+					errorCount++;
+					console.error(`Failed to create page ${file.path}: ${result.message}`);
+				}
+			} catch (error) {
+				errorCount++;
+				console.error(`Error processing ${file.path}:`, error);
+			}
+		}
+
+		this.showNotice(`New-only sync completed: ${successCount} successful, ${errorCount} failed, ${skippedCount} skipped`);
+
+	}
+
+
+
+
+	async syncCurrentNoteFromWikiJS(): Promise<void> {
+		const activeFile = this.app.workspace.getActiveFile();
+
+		if (!activeFile) {
+			this.showNotice('No active file to sync from Wiki.js');
+			return;
+		}
+
+		if (activeFile.extension !== 'md') {
+			this.showNotice('Only markdown files can be synced from Wiki.js');
+			return;
+		}
+
+		// Validate settings
+		if (!this.settings.wikiUrl || !this.settings.apiToken) {
+			this.showNotice('Please configure Wiki.js settings first (URL and API Token)');
+			return;
+		}
+
+		// Test connection
+		const api = new WikiJSAPI(this.settings);
+		const isConnected = await api.checkConnection();
+
+		if (!isConnected) {
+			this.showNotice('Cannot connect to Wiki.js. Please check your settings.');
+			return;
+		}
+
+		// Generate Wiki.js path from current file
+		const processor = new MarkdownProcessor(this.settings, undefined);
+		const wikiPath = processor.generatePath(activeFile.name, activeFile.parent?.path);
+
+		// Get page by path
+		const page = await api.getPageByPath(wikiPath);
+		if (!page) {
+			this.showNotice(`No page found at path "${wikiPath}" in Wiki.js`);
+			return;
+		}
+
+		// Get page content
+		const pageId = Number(page.id);
+		if (isNaN(pageId)) {
+			this.showNotice(`Invalid page ID: ${page.id}`);
+			return;
+		}
+
+		const pageWithContent = await api.getPageContent(pageId);
+		if (!pageWithContent) {
+			this.showNotice('Failed to fetch page content from Wiki.js');
+			return;
+		}
+
+		// Prepare content for Obsidian
+		const tags = pageWithContent.tags || [];
+		let reversedContent = processor.reverseMarkdown(pageWithContent.content, page.path);
+		let content = this.prepareContentForObsidian(reversedContent, tags);
+
+		// Write to file
+		await this.app.vault.modify(activeFile, content);
+		this.showNotice(`Synced "${activeFile.name}" from Wiki.js`);
+	}
+
+	async syncFileFromWikiJS(file: TFile): Promise<void> {
+		// Validate settings
+		if (!this.settings.wikiUrl || !this.settings.apiToken) {
+			this.showNotice('Please configure Wiki.js settings first (URL and API Token)');
+			return;
+		}
+
+		// Test connection
+		const api = new WikiJSAPI(this.settings);
+		const isConnected = await api.checkConnection();
+
+		if (!isConnected) {
+			this.showNotice('Cannot connect to Wiki.js. Please check your settings.');
+			return;
+		}
+
+		// Generate Wiki.js path from file
+		const processor = new MarkdownProcessor(this.settings, undefined);
+		const wikiPath = processor.generatePath(file.name, file.parent?.path);
+
+		// Get page by path
+		const page = await api.getPageByPath(wikiPath);
+		if (!page) {
+			this.showNotice(`No page found at path "${wikiPath}" in Wiki.js`);
+			return;
+		}
+
+		// Get page content
+		const pageId = Number(page.id);
+		if (isNaN(pageId)) {
+			this.showNotice(`Invalid page ID: ${page.id}`);
+			return;
+		}
+
+		const pageWithContent = await api.getPageContent(pageId);
+		if (!pageWithContent) {
+			this.showNotice('Failed to fetch page content from Wiki.js');
+			return;
+		}
+
+		const tags = pageWithContent.tags || [];
+		let reversedContent = processor.reverseMarkdown(pageWithContent.content, page.path);
+		let content = this.prepareContentForObsidian(reversedContent, tags);
+
+		// Write to file
+		await this.app.vault.modify(file, content);
+		this.showNotice(`Synced "${file.name}" from Wiki.js`);
+	}
+
+	async syncAllFromWikiJS(): Promise<void> {
+		// Validate settings
+		if (!this.settings.wikiUrl || !this.settings.apiToken) {
+			this.showNotice('Please configure Wiki.js settings first (URL and API Token)');
+			return;
+		}
+
+		// Test connection
+		const api = new WikiJSAPI(this.settings);
+		const isConnected = await api.checkConnection();
+
+		if (!isConnected) {
+			this.showNotice('Cannot connect to Wiki.js. Please check your settings.');
+			return;
+		}
+
+		// Get all pages from Wiki.js
+		this.showNotice('Fetching page list from Wiki.js...');
+		let pageList;
+		try {
+			const response = await api.getPages();
+			pageList = response.pages.list;
+		} catch (error) {
+			console.error('Failed to fetch page list:', error);
+			this.showNotice('Failed to fetch page list from Wiki.js');
+			return;
+		}
+
+		if (pageList.length === 0) {
+			this.showNotice('No pages found in Wiki.js');
+			return;
+		}
+
+		this.showNotice(`Syncing ${pageList.length} pages from Wiki.js...`);
+
+		let successCount = 0;
+		let errorCount = 0;
+		let skippedCount = 0;
+
+		for (let i = 0; i < pageList.length; i++) {
+			const page = pageList[i];
+			this.showNotice(`Processing ${i + 1}/${pageList.length}: ${page.title}`, 2000);
+
+			try {
+				console.debug(`syncAllFromWikiJS: processing page "${page.title}" with path "${page.path}"`);
+				// Get page content
+				const pageId = Number(page.id);
+				if (isNaN(pageId)) {
+					console.error(`Invalid page ID: ${page.id}`);
+					errorCount++;
+					continue;
+				}
+
+				const pageWithContent = await api.getPageContent(pageId);
+				if (!pageWithContent) {
+					console.error(`Failed to fetch content for page ${page.id}`);
+					errorCount++;
+					continue;
+				}
+
+				// Prepare content with tags
+				const processor = new MarkdownProcessor(this.settings, undefined);
+				const reversedContent = processor.reverseMarkdown(pageWithContent.content, page.path);
+				const preparedContent = this.prepareContentForObsidian(reversedContent, pageWithContent.tags || []);
+
+				// Try to find existing Obsidian file by Wiki.js path
+				const existingFile = this.findObsidianFileByWikiPath(page.path);
+				console.debug(`syncAllFromWikiJS: findObsidianFileByWikiPath("${page.path}") returned:`, existingFile?.path || null);
+
+				if (existingFile) {
+					// Overwrite existing file
+					await this.app.vault.modify(existingFile, preparedContent);
+					successCount++;
+				} else {
+					// No existing file found, create new one
+					const { folderPath, fileName } = this.wikiPathToObsidianPath(page.path);
+
+					// Resolve folder path with case-insensitive matching
+					const actualFolderPath = await this.resolveFolderPath(folderPath);
+					const fullPath = actualFolderPath ? `${actualFolderPath}/${fileName}` : fileName;
+
+					// Check if path conflicts with a folder or existing file
+					const conflictingFile = this.app.vault.getAbstractFileByPath(fullPath);
+					if (conflictingFile instanceof TFile) {
+						// Overwrite existing file at this path
+						await this.app.vault.modify(conflictingFile, preparedContent);
+						successCount++;
+					} else if (conflictingFile instanceof TFolder) {
+						// Path conflicts with a folder, skip
+						console.error(`Path ${fullPath} is a folder, skipping`);
+						skippedCount++;
+						continue;
+					} else {
+						// Create file (folders already created by resolveFolderPath)
+						await this.app.vault.create(fullPath, preparedContent);
+						successCount++;
+					}
+				}
+			} catch (error) {
+				console.error(`Error syncing page ${page.path}:`, error);
+				errorCount++;
+			}
+		}
+
+		this.showNotice(`Sync completed: ${successCount} successful, ${errorCount} failed, ${skippedCount} skipped`);
+	}
+
+	private wikiPathToObsidianPath(wikiPath: string): { folderPath: string; fileName: string } {
+		// Split wikiPath into segments
+		const segments = wikiPath.split('/').filter(s => s.length > 0);
+		if (segments.length === 0) {
+			return { folderPath: '', fileName: 'untitled.md' };
+		}
+		const fileName = segments.pop() + '.md';
+		const folderPath = segments.join('/');
+		return { folderPath, fileName };
+	}
+
+	private normalizeWikiPath(path: string): string {
+		// Normalize path segments to match generatePath output
+		const segments = path.split('/').filter(s => s.length > 0);
+		const normalizedSegments = segments.map(seg => MarkdownProcessor.sanitizeSegment(seg));
+		return normalizedSegments.join('/');
+	}
+
+	private findObsidianFileByWikiPath(wikiPath: string): TFile | null {
+		const processor = new MarkdownProcessor(this.settings, undefined);
+		const markdownFiles = this.app.vault.getMarkdownFiles();
+		const normalizedWikiPath = this.normalizeWikiPath(wikiPath);
+		console.debug(`findObsidianFileByWikiPath: searching for wikiPath "${wikiPath}" (normalized: "${normalizedWikiPath}") among ${markdownFiles.length} files`);
+
+		for (const file of markdownFiles) {
+			const computedPath = processor.generatePath(file.name, file.parent?.path);
+			const normalizedComputedPath = this.normalizeWikiPath(computedPath);
+			console.debug(`findObsidianFileByWikiPath: file "${file.path}" -> computed path "${computedPath}" (normalized: "${normalizedComputedPath}")`);
+			if (normalizedComputedPath === normalizedWikiPath) {
+				console.debug(`findObsidianFileByWikiPath: MATCH! file "${file.path}" matches wikiPath "${wikiPath}"`);
+				return file;
+			} else if (normalizedComputedPath.replace(/\s+/g, '') === normalizedWikiPath.replace(/\s+/g, '')) {
+				// Debug: strings differ only by whitespace
+				console.debug(`findObsidianFileByWikiPath: DEBUG - paths differ only by whitespace: "${normalizedComputedPath}" vs "${normalizedWikiPath}"`);
+			}
+		}
+		console.debug(`findObsidianFileByWikiPath: no match found for wikiPath "${wikiPath}"`);
+		return null;
+	}
+
+	private async resolveFolderPath(folderPath: string): Promise<string> {
+		if (!folderPath) {
+			return '';
+		}
+
+		console.debug(`resolveFolderPath: resolving "${folderPath}"`);
+		const segments = folderPath.split('/').filter(s => s.length > 0);
+		console.debug(`resolveFolderPath: segments: ${JSON.stringify(segments)}`);
+
+		// Helper to normalize separators (hyphens and underscores)
+		const normalizeSeparators = (s: string): string => {
+			return s.replace(/_/g, '-').replace(/-+/g, '-');
+		};
+
+		// Compute normalized target path segments
+		const targetNormalizedSegments = segments.map(seg =>
+			normalizeSeparators(MarkdownProcessor.sanitizeSegment(seg))
+		);
+		const targetNormalizedPath = targetNormalizedSegments.join('/');
+		console.debug(`resolveFolderPath: target normalized path: "${targetNormalizedPath}"`);
+
+		// Helper to compute normalized path for a folder
+		const computeNormalizedFolderPath = (folder: TFolder): string => {
+			const pathSegments: string[] = [];
+			let current: TFolder | null = folder;
+			while (current) {
+				pathSegments.unshift(normalizeSeparators(MarkdownProcessor.sanitizeSegment(current.name)));
+				current = current.parent;
+			}
+			// Remove empty root segment
+			return pathSegments.filter(s => s.length > 0).join('/');
+		};
+
+		// Get all folders in the vault
+		const allFiles = this.app.vault.getAllLoadedFiles();
+		const allFolders = allFiles.filter(f => f instanceof TFolder) as TFolder[];
+		console.debug(`resolveFolderPath: found ${allFolders.length} total folders in vault`);
+
+		// Find best matching folder (longest normalized path that is a prefix of target)
+		let bestExactMatch: { folder: TFolder; normalizedPath: string; } | null = null;
+		let bestMatch: { folder: TFolder; normalizedPath: string; } | null = null;
+		for (const folder of allFolders) {
+			const normalizedFolderPath = computeNormalizedFolderPath(folder);
+			console.debug(`resolveFolderPath: folder "${folder.path}" -> normalized: "${normalizedFolderPath}"`);
+
+			if (normalizedFolderPath === targetNormalizedPath) {
+				// Exact match candidate
+				console.debug(`resolveFolderPath: exact match found: "${folder.path}" -> "${normalizedFolderPath}"`);
+				const isBetterExact = !bestExactMatch ||
+					// Tie-breaking: prefer folder with uppercase letters (original casing)
+					(folder.path.toLowerCase() !== folder.path &&
+					 bestExactMatch.folder.path.toLowerCase() === bestExactMatch.folder.path);
+				if (isBetterExact) {
+					bestExactMatch = { folder, normalizedPath: normalizedFolderPath };
+					console.debug(`resolveFolderPath: new best exact match: "${folder.path}"`);
+				}
+				continue;
+			}
+
+			// Check if this folder's normalized path is a prefix of target
+			if (targetNormalizedPath.startsWith(normalizedFolderPath + '/')) {
+				// Check if it's longer (better) than current best match
+				const isBetter = !bestMatch ||
+					normalizedFolderPath.length > bestMatch.normalizedPath.length ||
+					(normalizedFolderPath.length === bestMatch.normalizedPath.length &&
+						// Tie-breaking: prefer folder with uppercase letters (original casing)
+						folder.path.toLowerCase() !== folder.path &&
+						bestMatch.folder.path.toLowerCase() === bestMatch.folder.path);
+
+				if (isBetter) {
+					bestMatch = { folder, normalizedPath: normalizedFolderPath };
+					console.debug(`resolveFolderPath: new best match: "${folder.path}" (prefix length: ${normalizedFolderPath.length})`);
+				}
+			}
+		}
+
+		// If we found an exact match, return the best one
+		if (bestExactMatch) {
+			console.debug(`resolveFolderPath: returning best exact match "${bestExactMatch.folder.path}"`);
+			return bestExactMatch.folder.path;
+		}
+
+		let currentPath = '';
+		if (bestMatch) {
+			// Start from best matching folder
+			currentPath = bestMatch.folder.path;
+			console.debug(`resolveFolderPath: starting from best match folder "${currentPath}"`);
+
+			// Remove matched segments from target
+			const matchedSegmentCount = bestMatch.normalizedPath.split('/').length;
+			const remainingSegments = segments.slice(matchedSegmentCount);
+			console.debug(`resolveFolderPath: remaining segments to create: ${JSON.stringify(remainingSegments)}`);
+
+			// Create remaining folders
+			for (const segment of remainingSegments) {
+				const parent = currentPath ? this.app.vault.getAbstractFileByPath(currentPath) : null;
+				if (parent !== null && !(parent instanceof TFolder)) {
+					// Parent exists but is not a folder (e.g., a file)
+					// Cannot proceed, return path with remaining segments
+					console.debug(`resolveFolderPath: parent "${currentPath}" is not a folder, returning with remaining path`);
+					const remainingPath = remainingSegments.slice(remainingSegments.indexOf(segment)).join('/');
+					const result = currentPath ? `${currentPath}/${remainingPath}` : remainingPath;
+					return result;
+				}
+
+				const sanitizedSegment = MarkdownProcessor.sanitizeSegment(segment);
+				const normalizedSegment = normalizeSeparators(sanitizedSegment);
+				const newFolderPath = currentPath ? `${currentPath}/${normalizedSegment}` : normalizedSegment;
+
+				console.debug(`resolveFolderPath: creating folder "${newFolderPath}" (from segment "${segment}" -> normalized: "${normalizedSegment}")`);
+				try {
+					await this.app.vault.createFolder(newFolderPath);
+					currentPath = newFolderPath;
+					console.debug(`resolveFolderPath: created folder, currentPath now "${currentPath}"`);
+				} catch (e) {
+					// Folder might already exist
+					console.debug(`resolveFolderPath: folder creation failed, trying to find "${newFolderPath}"`);
+					const found = this.app.vault.getAbstractFileByPath(newFolderPath);
+					if (found instanceof TFolder) {
+						currentPath = found.path;
+						console.debug(`resolveFolderPath: found existing folder, currentPath now "${currentPath}"`);
+					} else {
+						// Could not create or find, use normalized path
+						currentPath = newFolderPath;
+						console.debug(`resolveFolderPath: could not create or find folder, using path "${currentPath}"`);
+					}
+				}
+			}
+		} else {
+			// No matching prefix found, create entire path from root
+			console.debug(`resolveFolderPath: no matching prefix found, creating entire path from root`);
+			currentPath = '';
+			for (const segment of segments) {
+				const parent = currentPath ? this.app.vault.getAbstractFileByPath(currentPath) : null;
+				if (parent !== null && !(parent instanceof TFolder)) {
+					// Parent exists but is not a folder (e.g., a file)
+					// Cannot proceed, return path with remaining segments
+					console.debug(`resolveFolderPath: parent "${currentPath}" is not a folder, returning with remaining path`);
+					const remainingPath = segments.slice(segments.indexOf(segment)).join('/');
+					const result = currentPath ? `${currentPath}/${remainingPath}` : remainingPath;
+					return result;
+				}
+
+				const sanitizedSegment = MarkdownProcessor.sanitizeSegment(segment);
+				const normalizedSegment = normalizeSeparators(sanitizedSegment);
+				const newFolderPath = currentPath ? `${currentPath}/${normalizedSegment}` : normalizedSegment;
+
+				console.debug(`resolveFolderPath: creating folder "${newFolderPath}" (from segment "${segment}" -> normalized: "${normalizedSegment}")`);
+				try {
+					await this.app.vault.createFolder(newFolderPath);
+					currentPath = newFolderPath;
+					console.debug(`resolveFolderPath: created folder, currentPath now "${currentPath}"`);
+				} catch (e) {
+					// Folder might already exist
+					console.debug(`resolveFolderPath: folder creation failed, trying to find "${newFolderPath}"`);
+					const found = this.app.vault.getAbstractFileByPath(newFolderPath);
+					if (found instanceof TFolder) {
+						currentPath = found.path;
+						console.debug(`resolveFolderPath: found existing folder, currentPath now "${currentPath}"`);
+					} else {
+						// Could not create or find, use normalized path
+						currentPath = newFolderPath;
+						console.debug(`resolveFolderPath: could not create or find folder, using path "${currentPath}"`);
+					}
+				}
+			}
+		}
+
+		console.debug(`resolveFolderPath: final path: "${currentPath}"`);
+		return currentPath;
+	}
+
+	private prepareContentForObsidian(content: string, tags: string[]): string {
+		if (tags.length === 0) {
+			return content;
+		}
+
+		// Check if content already has YAML frontmatter
+		const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+		if (frontmatterMatch) {
+			const frontmatter = frontmatterMatch[1];
+			// Check if tags line exists
+			if (frontmatter.includes('tags:')) {
+				return content;
+			} else {
+				const newFrontmatter = frontmatter + '\ntags: [' + tags.map(tag => `"${tag}"`).join(', ') + ']';
+				return content.replace(/^---\n[\s\S]*?\n---/, `---\n${newFrontmatter}\n---`);
+			}
+		} else {
+			const frontmatter = `---\ntags: [${tags.map(tag => `"${tag}"`).join(', ')}]\n---\n\n`;
+			return frontmatter + content;
+		}
 	}
 }
 
@@ -412,7 +1389,7 @@ class BulkUploadModal extends Modal {
 		uploadButton.disabled = true;
 
 		const api = new WikiJSAPI(this.plugin.settings);
-		const processor = new MarkdownProcessor(this.plugin.settings);
+		const processor = new MarkdownProcessor(this.plugin.settings, undefined);
 
 		let completed = 0;
 		const total = this.files.length;
@@ -514,15 +1491,6 @@ class BulkUploadModal extends Modal {
 		const errorCount = Object.values(this.uploadProgress).filter(status => status === 'error').length;
 		const skippedCount = Object.values(this.uploadProgress).filter(status => status === 'skipped').length;
 
-		// Sync navigation if enabled and there were successful uploads
-		if (this.plugin.settings.syncNavigation && successCount > 0) {
-			try {
-				await this.syncNavigationTree(api, this.files.filter(file => this.uploadProgress[file.path] === 'success'));
-			} catch (error) {
-				console.error('Navigation sync failed:', error as any);
-				// Don't fail the entire upload if navigation sync fails
-			}
-		}
 
 		uploadButton.textContent = `Completed (${successCount} success, ${errorCount} errors, ${skippedCount} skipped)`;
 
@@ -567,124 +1535,9 @@ class BulkUploadModal extends Modal {
 		}
 	}
 
-	private async syncNavigationTree(api: WikiJSAPI, files: TFile[]): Promise<void> {
-		// Check if navigation sync is enabled
-		if (!this.plugin.settings.syncNavigation) {
-			console.debug('Navigation sync is disabled');
-			return;
-		}
 
-		try {
-			console.debug('Starting navigation tree sync...');
 
-			// Get current navigation tree
-			let currentTree: NavigationItemInput[] = [];
-			try {
-				const response = await api.getNavigationTree();
-				currentTree = response.navigation.tree;
-				console.debug('Current navigation tree:', currentTree);
-			} catch (error) {
-				console.warn('Failed to get current navigation tree:', error as any);
-				// Continue with empty tree
-			}
 
-			// Build navigation items from uploaded files
-			const newNavigationItems = this.buildNavigationFromFiles(files);
-
-			// Merge with existing tree (simple approach: replace items for same paths)
-			// For now, we'll just use the new items
-			// TODO: Implement proper merging logic
-			const mergedTree = this.mergeNavigationTrees(currentTree, newNavigationItems);
-
-			// Update navigation tree
-			const result = await api.updateNavigationTree(mergedTree);
-
-			if (result.navigation.updateTree.responseResult.succeeded) {
-				console.debug('Navigation tree updated successfully');
-				new Notice('Navigation menu synchronized successfully');
-			} else {
-				console.error('Failed to update navigation tree:', result.navigation.updateTree.responseResult.message);
-				new Notice(`Failed to sync navigation: ${result.navigation.updateTree.responseResult.message}`);
-			}
-		} catch (error) {
-			console.error('Error syncing navigation tree:', error as any);
-			new Notice(`Error syncing navigation: ${(error as any).message}`);
-		}
-	}
-
-	private buildNavigationFromFiles(files: TFile[]): NavigationItemInput[] {
-		const items: NavigationItemInput[] = [];
-		const processor = new MarkdownProcessor(this.plugin.settings);
-
-		// Track folder paths we've already created items for
-		const createdFolders = new Set<string>();
-
-		for (const file of files) {
-			// Generate Wiki.js path for the file
-			const pagePath = processor.generatePath(file.name, file.parent?.path);
-
-			// Create folder items for each level of the path
-			const pathSegments = pagePath.split('/');
-
-			// Build folder hierarchy
-			let currentPath = '';
-			for (let i = 0; i < pathSegments.length - 1; i++) {
-				const segment = pathSegments[i];
-				currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-
-				if (!createdFolders.has(currentPath)) {
-					items.push({
-						id: `folder-${currentPath}`,
-						kind: 'folder',
-						label: this.formatLabel(segment),
-						targetType: undefined,
-						target: undefined,
-						icon: undefined
-					});
-					createdFolders.add(currentPath);
-				}
-			}
-
-			// Create page item
-			const pageName = pathSegments[pathSegments.length - 1];
-			items.push({
-				id: `page-${pagePath}`,
-				kind: 'page',
-				label: this.formatLabel(pageName),
-				targetType: 'page',
-				target: `/${pagePath}`,
-				icon: undefined
-			});
-		}
-
-		return items;
-	}
-
-	private mergeNavigationTrees(currentTree: NavigationItemInput[], newItems: NavigationItemInput[]): NavigationItemInput[] {
-		// Simple implementation: replace items with same id
-		const merged = [...currentTree];
-		const newIds = new Set(newItems.map(item => item.id));
-
-		// Remove existing items that will be replaced
-		for (let i = merged.length - 1; i >= 0; i--) {
-			if (newIds.has(merged[i].id)) {
-				merged.splice(i, 1);
-			}
-		}
-
-		// Add new items
-		merged.push(...newItems);
-
-		return merged;
-	}
-
-	private formatLabel(text: string): string {
-		// Convert slug to readable label (e.g., "my-page" -> "My Page")
-		return text
-			.replace(/[-_]/g, ' ')
-			.replace(/\b\w/g, char => char.toUpperCase())
-			.trim();
-	}
 
 	private updateFileStatusInModal(filePath: string) {
 		const statusElements = this.contentEl.querySelectorAll('.upload-status');

@@ -2,9 +2,11 @@ import { WikiJSSettings } from './types';
 
 export class MarkdownProcessor {
 	private settings: WikiJSSettings;
+	private wikilinkResolver?: (link: string, sourceFileName?: string) => string | undefined;
 
-	constructor(settings: WikiJSSettings) {
+	constructor(settings: WikiJSSettings, wikilinkResolver?: (link: string, sourceFileName?: string) => string | undefined) {
 		this.settings = settings;
+		this.wikilinkResolver = wikilinkResolver;
 	}
 
 	/**
@@ -24,19 +26,29 @@ export class MarkdownProcessor {
 
 		if (!this.settings.preserveObsidianSyntax) {
 			// Convert Obsidian-specific syntax
-			processedContent = this.convertObsidianLinks(processedContent);
-			console.debug('Processed pagePath:', pagePath);
-			processedContent = this.convertObsidianImages(processedContent, pagePath);
+			// Only convert path-dependent syntax when pagePath is provided
+			if (pagePath !== undefined) {
+				processedContent = this.convertObsidianLinks(processedContent, pagePath, fileName);
+				processedContent = this.convertObsidianImages(processedContent, pagePath);
+			}
+			// Always convert tags and callouts (not path-dependent)
 			processedContent = this.convertObsidianTags(processedContent);
 			processedContent = this.convertObsidianCallouts(processedContent);
+			console.debug('Processed pagePath:', pagePath);
 		}
 
-		if (this.settings.autoConvertLinks) {
-			processedContent = this.convertInternalLinks(processedContent);
+		if (this.settings.autoConvertLinks && pagePath !== undefined) {
+			processedContent = this.convertInternalLinks(processedContent, pagePath);
 		}
 
 		// Clean up any remaining Obsidian-specific elements
 		processedContent = this.cleanupObsidianSyntax(processedContent);
+
+		// Debug: log sample of converted content when pagePath is provided
+		if (pagePath !== undefined) {
+			const sample = processedContent.substring(0, Math.min(200, processedContent.length));
+			console.debug('processMarkdown result sample:', sample.replace(/\n/g, '\\n'));
+		}
 
 		return {
 			content: processedContent.trim(),
@@ -56,16 +68,42 @@ export class MarkdownProcessor {
 		return fileName.replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
 	}
 
-	private convertObsidianLinks(content: string): string {
-		// Convert [[Link]] to [Link](Link), but ignore image links
+	private convertObsidianLinks(content: string, pagePath?: string, fileName?: string): string {
+		// Convert [[Link]] to [Link](/locale/path), but ignore image links
+		const locale = this.settings.locale || 'en';
+		console.debug('convertObsidianLinks: pagePath=', pagePath, 'locale=', locale, 'fileName=', fileName);
 		return content.replace(/\[\[([^\]|]+)(\|([^\]]+))?\]\]/g, (match, link, pipe, displayText) => {
 			// Skip if this is an image link (ends with image extension)
 			if (/\.(png|jpg|jpeg|gif|svg|webp|bmp|ico|tiff|tif|avif|heic|heif)$/i.test(link)) {
 				return match;
 			}
+			// Split anchor from page reference (e.g., "Page#heading" or "Page#^block")
+			let pageRef = link;
+			let anchor = '';
+			const hashIndex = link.indexOf('#');
+			if (hashIndex !== -1) {
+				pageRef = link.substring(0, hashIndex);
+				anchor = link.substring(hashIndex); // includes '#'
+			}
 			const text = displayText || link;
-			const url = link.replace(/\s+/g, '-').toLowerCase();
-			return `[${text}](/${url})`;
+			// Try to use wikilink resolver if available
+			let targetPath: string;
+			if (this.wikilinkResolver) {
+				const resolved = this.wikilinkResolver(pageRef, fileName);
+				if (resolved !== undefined) {
+					targetPath = resolved;
+					console.debug('convertObsidianLinks: resolved via wikilinkResolver:', pageRef, '->', targetPath);
+				} else {
+					// Fall back to relative resolution
+					targetPath = this.resolveWikiLinkToWikiPath(pageRef, pagePath);
+					console.debug('convertObsidianLinks: wikilinkResolver returned undefined, using fallback:', targetPath);
+				}
+			} else {
+				targetPath = this.resolveWikiLinkToWikiPath(pageRef, pagePath);
+			}
+			const url = `/${locale}/${targetPath}${anchor}`;
+			console.debug('convertObsidianLinks: link=', link, 'pageRef=', pageRef, 'targetPath=', targetPath, 'url=', url);
+			return `[${text}](${url})`;
 		});
 	}
 
@@ -126,13 +164,24 @@ export class MarkdownProcessor {
 		});
 	}
 
-	private convertInternalLinks(content: string): string {
-		// Convert relative links to absolute Wiki.js paths
+	private convertInternalLinks(content: string, pagePath?: string): string {
+		// Convert relative links to absolute Wiki.js paths with locale
+		const locale = this.settings.locale || 'en';
 		return content.replace(/\[([^\]]+)\]\((?!https?:\/\/)([^)]+)\)/g, (match, text, url) => {
 			if (url.startsWith('/')) {
-				return match; // Already absolute
+				// Already absolute, but may need locale prefix
+				// If URL already starts with locale, keep as is
+				// For simplicity, assume absolute paths are correct
+				return match;
 			}
-			return `[${text}](/${url})`;
+			// Resolve relative link to Wiki.js path
+			const resolvedPath = this.resolveRelativeLink(url, pagePath);
+			// If resolvedPath is same as original url (e.g., anchor only), keep original
+			if (resolvedPath === url) {
+				return match;
+			}
+			const fullUrl = `/${locale}/${resolvedPath}`;
+			return `[${text}](${fullUrl})`;
 		});
 	}
 
@@ -216,6 +265,145 @@ export class MarkdownProcessor {
 			.join('/');
 
 		return cleanFolderPath || '';
+	}
+
+	/**
+	 * Resolve a wikilink to a Wiki.js path relative to the source page's path.
+	 * @param link The wikilink (e.g., "Note", "folder/Note", "../Note")
+	 * @param sourcePagePath The full Wiki.js path of the source page (e.g., "folder/subfolder/page-slug")
+	 * @returns The resolved Wiki.js path for the target page (without locale prefix)
+	 */
+	private resolveWikiLinkToWikiPath(link: string, sourcePagePath?: string): string {
+		// Remove .md extension if present
+		let cleanLink = link.replace(/\.md$/i, '');
+		console.debug('resolveWikiLinkToWikiPath: link=', link, 'cleanLink=', cleanLink, 'sourcePagePath=', sourcePagePath);
+
+		// If no source page path, just sanitize the link as a slug
+		if (!sourcePagePath) {
+			const result = this.sanitizeSegment(cleanLink);
+			console.debug('resolveWikiLinkToWikiPath: no sourcePagePath, returning:', result);
+			return result;
+		}
+
+		// Split source page path into directory and slug
+		const lastSlash = sourcePagePath.lastIndexOf('/');
+		const sourceDir = lastSlash === -1 ? '' : sourcePagePath.substring(0, lastSlash);
+		console.debug('resolveWikiLinkToWikiPath: sourceDir=', sourceDir, 'lastSlash=', lastSlash);
+
+		// Handle absolute path (starting with '/')
+		if (cleanLink.startsWith('/')) {
+			// Treat as absolute Wiki.js path (without locale)
+			cleanLink = cleanLink.substring(1);
+			const segments = cleanLink.split('/').filter(s => s.length > 0);
+			const sanitizedSegments = segments.map(seg => this.sanitizeSegment(seg));
+			return sanitizedSegments.join('/');
+		}
+
+		// Resolve relative path
+		const sourceSegments = sourceDir.split('/').filter(Boolean);
+		const linkSegments = cleanLink.split('/').filter(s => s.length > 0);
+		const resolvedSegments = [...sourceSegments];
+		for (const segment of linkSegments) {
+			if (segment === '..') {
+				if (resolvedSegments.length > 0) {
+					resolvedSegments.pop();
+				}
+			} else if (segment !== '.') {
+				resolvedSegments.push(segment);
+			}
+		}
+		// Sanitize each segment
+		const sanitizedSegments = resolvedSegments.map(seg => this.sanitizeSegment(seg));
+		const result = sanitizedSegments.join('/');
+		console.debug('resolveWikiLinkToWikiPath: result=', result, 'sourceSegments=', sourceSegments, 'linkSegments=', linkSegments, 'resolvedSegments=', resolvedSegments);
+		return result;
+	}
+
+	/**
+	 * Sanitize a path segment (reused from generatePath)
+	 */
+	private sanitizeSegment(segment: string): string {
+		return segment
+			.toLowerCase()
+			// Replace spaces with hyphens
+			.replace(/\s+/g, '-')
+			// Replace underscores with hyphens for consistency
+			.replace(/_/g, '-')
+			// Replace periods (reserved for file extensions)
+			.replace(/\./g, '-')
+			// Remove remaining unsafe URL characters, keep only Unicode letters/numbers, hyphens
+			.replace(/[^\p{L}\p{N}-]/gu, '')
+			// Collapse multiple consecutive hyphens
+			.replace(/-{2,}/g, '-')
+			// Remove leading/trailing hyphens
+			.replace(/^-+|-+$/g, '');
+	}
+
+	/**
+	 * Resolve a relative markdown link to a Wiki.js path.
+	 * Handles query parameters and anchors.
+	 */
+	private resolveRelativeLink(url: string, pagePath?: string): string {
+		// Split URL into path, query, and anchor
+		let path = url;
+		let query = '';
+		let anchor = '';
+		const queryIndex = path.indexOf('?');
+		if (queryIndex !== -1) {
+			query = path.substring(queryIndex);
+			path = path.substring(0, queryIndex);
+		}
+		const anchorIndex = path.indexOf('#');
+		if (anchorIndex !== -1) {
+			anchor = path.substring(anchorIndex);
+			path = path.substring(0, anchorIndex);
+		}
+		// Remove .md extension if present
+		path = path.replace(/\.md$/i, '');
+		// If path is empty after stripping extension (e.g., just '#anchor'), return original
+		if (!path) {
+			return url;
+		}
+		// Resolve relative path using pagePath as base directory
+		let resolvedPath = '';
+		if (pagePath) {
+			const lastSlash = pagePath.lastIndexOf('/');
+			const baseDir = lastSlash === -1 ? '' : pagePath.substring(0, lastSlash);
+			// Handle absolute path (starting with '/')
+			if (path.startsWith('/')) {
+				// Treat as absolute Wiki.js path (without locale)
+				path = path.substring(1);
+				const segments = path.split('/').filter(s => s.length > 0);
+				const sanitizedSegments = segments.map(seg => this.sanitizeSegment(seg));
+				resolvedPath = sanitizedSegments.join('/');
+			} else {
+				// Relative path resolution with .. and .
+				const baseSegments = baseDir.split('/').filter(Boolean);
+				const pathSegments = path.split('/').filter(s => s.length > 0);
+				const resolvedSegments = [...baseSegments];
+				for (const segment of pathSegments) {
+					if (segment === '..') {
+						if (resolvedSegments.length > 0) {
+							resolvedSegments.pop();
+						}
+					} else if (segment !== '.') {
+						resolvedSegments.push(segment);
+					}
+				}
+				const sanitizedSegments = resolvedSegments.map(seg => this.sanitizeSegment(seg));
+				resolvedPath = sanitizedSegments.join('/');
+			}
+		} else {
+			// No base path, just sanitize the path (absolute or relative)
+			if (path.startsWith('/')) {
+				path = path.substring(1);
+			}
+			const segments = path.split('/').filter(s => s.length > 0);
+			const sanitizedSegments = segments.map(seg => this.sanitizeSegment(seg));
+			resolvedPath = sanitizedSegments.join('/');
+		}
+		// Reattach query and anchor
+		return resolvedPath + query + anchor;
 	}
 
 	/**
@@ -344,5 +532,58 @@ export class MarkdownProcessor {
 		path = path.split('?')[0].split('#')[0];
 		
 		return path;
+	}
+
+	/**
+	 * Convert Wiki.js markdown back to Obsidian markdown (reverse conversion)
+	 */
+	reverseMarkdown(content: string, pagePath?: string): string {
+		let processedContent = content;
+
+		if (!this.settings.preserveObsidianSyntax) {
+			// Revert link conversions
+			const locale = this.settings.locale || 'en';
+			const localePrefix = `/${locale}/`;
+			// Match [text](/locale/path#anchor)
+			const linkRegex = new RegExp(`\\[([^\\]]+)\\]\\(${localePrefix}([^)]+)\\)`, 'g');
+			processedContent = processedContent.replace(linkRegex, (match, text, path) => {
+				// Determine if path contains anchor
+				let wikiPath = path;
+				let anchor = '';
+				const hashIndex = path.indexOf('#');
+				if (hashIndex !== -1) {
+					wikiPath = path.substring(0, hashIndex);
+					anchor = path.substring(hashIndex);
+				}
+				// Convert to wikilink
+				if (text === wikiPath) {
+					return `[[${wikiPath}${anchor}]]`;
+				} else {
+					return `[[${wikiPath}${anchor}|${text}]]`;
+				}
+			});
+
+			// Revert tag backticks
+			processedContent = processedContent.replace(/`#([a-zA-Z0-9_/-]+)`/g, '#$1');
+		}
+
+		return processedContent;
+	}
+
+	static sanitizeSegment(segment: string): string {
+		return segment
+			.toLowerCase()
+			// Replace spaces with hyphens
+			.replace(/\s+/g, '-')
+			// Replace underscores with hyphens for consistency
+			.replace(/_/g, '-')
+			// Replace periods (reserved for file extensions)
+			.replace(/\./g, '-')
+			// Remove remaining unsafe URL characters, keep only Unicode letters/numbers, hyphens
+			.replace(/[^\p{L}\p{N}-]/gu, '')
+			// Collapse multiple consecutive hyphens
+			.replace(/-{2,}/g, '-')
+			// Remove leading/trailing hyphens
+			.replace(/^-+|-+$/g, '');
 	}
 	}

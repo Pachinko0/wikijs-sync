@@ -1,21 +1,25 @@
-# Wikijs Sync
+# Note to Wiki.js
 
-A fork of [luashiping/note-to-wikijs](https://github.com/luashiping/note-to-wikijs) with **enhanced functionality**, including bidirectional sync, bulk uploads, and a more intuitive UI.
+An Obsidian plugin that allows you to upload your notes to a Wiki.js instance through its GraphQL API. Supports automatic image upload, markdown conversion, bulk uploads, and auto-sync.
+
+**Fork of [luashiping/note-to-wikijs](https://github.com/luashiping/note-to-wikijs)** with enhanced functionality including navigation menu sync, locale support, improved link conversion, and advanced sync options.
 
 ---
 
 ## Features
 
-- 🔄 **TODO: Bidirectional Sync** – Keep your Obsidian notes and Wiki.js pages in sync automatically  
-- 🗂️ **Bulk Upload** – Upload entire folders with notes and images in one go  
-- 📤 Upload individual notes to Wiki.js  
-- 🖼️ Automatic image upload to Wiki.js assets  
-- 🏷️ Support for tags and metadata  
-- ⚙️ Configurable upload behavior (create new, update existing, or ask)  
-- 🔗 Automatic link conversion  
-- 📋 Rich upload modal with content preview  
-- 🎯 Right-click context menu integration  
-- ✨ Improved UI for easier navigation and error handling, with extra configuration  
+- 📤 **Individual Note Upload** – Upload current note or any file via command palette, ribbon icon, or right-click context menu
+- 🗂️ **Bulk Folder Upload** – Upload entire folders with configurable conflict resolution (overwrite, skip, ask)
+- 🔄 **Auto-Sync Vault** – Automatically sync modified notes to Wiki.js after configurable delay
+- 🖼️ **Automatic Image Upload** – Images referenced in notes are uploaded to Wiki.js assets with proper folder structure
+- 🏷️ **Tag & Metadata Support** – Extracts tags from YAML frontmatter and inline hashtags
+- 🌐 **Locale Support** – Configurable locale for new pages (default: 'en')
+- 🔗 **Smart Link Conversion** – Converts Obsidian wikilinks to Wiki.js paths with locale and full folder structure
+- ⚙️ **Configurable Upload Behavior** – Choose what happens when a page already exists (ask, update, create-new)
+- 📋 **Rich Upload Modal** – Preview and edit page title, path, description, and tags before uploading
+- 🎯 **Navigation Menu Sync** – Automatically syncs navigation tree after successful uploads
+- 📊 **Multiple Sync Modes** – Force sync (overwrite all), sync new only (skip existing), or bulk upload with images
+- 🔌 **Connection Testing** – Test connection to Wiki.js instance directly from settings
 
 ---
 
@@ -23,81 +27,108 @@ A fork of [luashiping/note-to-wikijs](https://github.com/luashiping/note-to-wiki
 
 ### Install via BRAT (Recommended)
 
-[BRAT](https://github.com/TfTHacker/obsidian42-brat) (Beta Reviewers Auto-update Tester) is the easiest way to install this plugin before it's available in the official Obsidian community plugins list.
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) (Beta Reviewers Auto-update Tester) is the easiest way to install this plugin.
 
-1. Install the **BRAT** plugin from the Obsidian Community Plugins  
-2. Open BRAT settings and click **"Add Beta plugin"**  
-3. Enter the repository URL: [Wikijs-sync](https://github.com/Pachinko0/wikijs-sync.git)
-4. Click **"Add Plugin"** — BRAT will download and install it automatically  
-5. Enable **Note to Wiki.js** in Obsidian Settings > Community Plugins  
+1. Install the **BRAT** plugin from the Obsidian Community Plugins
+2. Open BRAT settings and click **"Add Beta plugin"**
+3. Enter the repository URL: `https://github.com/Pachinko0/wikijs-sync.git`
+4. Click **"Add Plugin"** – BRAT will download and install it automatically
+5. Enable **Note to Wiki.js** in Obsidian Settings > Community Plugins
 
-BRAT also keeps the plugin up to date automatically whenever a new release is published.
-
----
+BRAT keeps the plugin up to date automatically whenever a new release is published.
 
 ### Manual Installation
 
-1. Download the Zip.
-2. Extract the files to your Obsidian plugins folder: `{vault}/.obsidian/plugins/note-to-wikijs-plus/`  
-3. Enable the plugin in Obsidian settings  
-
----
+1. Download the latest release from the [GitHub releases page](https://github.com/Pachinko0/wikijs-sync/releases)
+2. Extract the files to your Obsidian plugins folder: `{vault}/.obsidian/plugins/wikijs-sync/`
+3. Enable the plugin in Obsidian Settings > Community Plugins
 
 ### Building from Source
 
-1. Clone this repository  
-2. Run `npm install` to install dependencies  
-3. Run `npm run build` to build the plugin  
+1. Clone this repository
+2. Run `npm install` to install dependencies
+3. Run `npm run build` to build the plugin
 4. Copy `main.js`, `manifest.json`, and `styles.css` to your plugins folder
-5. You can use Hot Reload plugin and symlinks for faster testing. 
+5. For development, use `npm run dev` with Hot Reload plugin and symlink setup (see [DEVELOPMENT.md](./DEVELOPMENT.md))
 
 ---
 
 ## Configuration
 
-1. Open Obsidian Settings  
-2. Navigate to "Community Plugins" > "Note to Wiki.js Plus"  
-3. Configure the following settings:
+Open Obsidian Settings > Community Plugins > Note to Wiki.js to configure:
 
 ### Required Settings
 
-- **Wiki.js URL**: The base URL of your Wiki.js instance (e.g., `https://wiki.example.com`)  
-- **API Token**: Your Wiki.js API token (generate this in Wiki.js Admin > API Access)  
+- **Wiki.js URL** – The base URL of your Wiki.js instance (e.g., `https://wiki.example.com`)
+- **API Token** – Your Wiki.js API token (generate in Wiki.js Admin > API Access)
 
-### Optional Settings
+### General Settings
 
-- **Default Tags**: Comma-separated list of default tags to add to uploaded pages  
-- **Auto Convert Links**: Automatically convert relative links to absolute Wiki.js paths  
-- **Preserve Obsidian Syntax**: Keep Obsidian-specific syntax unchanged (e.g., `[[links]]`, callouts)  
-- **Upload Behavior**: Choose what happens when uploading a note that already exists  
+- **Auto Convert Links** – Automatically convert relative links to absolute Wiki.js paths (recommended: enabled)
+- **Preserve Obsidian Syntax** – Keep Obsidian-specific syntax unchanged (e.g., `[[links]]`, callouts)
+- **Locale** – Locale code for new pages (e.g., `en`, `zh`, `fr`). Default: `en`
+
+### Advanced Settings
+
+- **Upload Behavior** – Choose what happens when uploading a note that already exists:
+  - `ask` – Prompt each time (default)
+  - `update` – Always update existing page
+  - `create-new` – Always create new page
+
+- **Bulk Upload Behavior** – Conflict resolution for bulk uploads:
+  - `overwrite` – Overwrite existing pages
+  - `skip` – Skip existing pages
+  - `ask` – Ask for each page
+
+- **Upload Images in Bulk Upload** – When enabled, images referenced in notes will be uploaded to Wiki.js assets during bulk upload
+
+- **Auto-Sync Vault** – Automatically sync modified notes to Wiki.js
+- **Auto-Sync Delay** – Delay in seconds before syncing a modified note (prevents too frequent updates)
+- **Auto-Sync Images** – Upload images referenced in notes during auto-sync
 
 ---
 
 ## Usage
 
-### Bidirectional Sync
-
-WIP
-
 ### Upload Current Note
 
-1. Open the note you want to upload  
-2. Use one of these methods:  
-   - Click the upload icon in the ribbon  
-   - Use the command palette (Ctrl/Cmd + P) and search for "Upload current note to Wiki.js"  
-   - Use the keyboard shortcut (if configured)  
-
----
+1. Open the note you want to upload
+2. Use one of these methods:
+   - Click the upload icon in the ribbon
+   - Use command palette (Ctrl/Cmd + P) → "Upload current note"
+   - Right-click the file in file explorer → "Upload to wiki.js"
 
 ### Upload Specific File or Folder
 
-1. Right-click any markdown file or folder in the file explorer  
-2. Select **"Upload to Wiki.js"** from the context menu  
+1. Right-click any markdown file or folder in the file explorer
+2. Select **"Upload to wiki.js"** from the context menu
 
 OR
 
-1. Use the command palette and search for "Upload file/folder to Wiki.js"  
-2. Select the file(s) or folder from the list  
+1. Use command palette → "Upload file"
+2. Select the file from the list
+
+### Bulk Upload Folder
+
+1. Use command palette → "Bulk upload folder to Wiki.js"
+2. Select a folder from your vault
+3. Choose conflict resolution behavior if configured to ask
+
+### Sync Options
+
+- **Force Sync Everything** – Upload all notes, overwriting existing Wiki.js pages
+- **Sync New Files Only** – Upload only notes that don't already exist in Wiki.js
+- **Auto-Sync** – Automatically sync modified notes after the configured delay
+
+### Upload Modal
+
+When uploading a note, a modal appears with:
+
+- **Wiki.js Path** – Defaults to Obsidian folder structure (e.g., `folder/subfolder` for notes in folders)
+- **Page Title** – Extracted from first heading or filename
+- **Description** – Optional page description
+- **Tags** – Extracted from YAML frontmatter and inline hashtags
+- **Upload Button** – Processes the upload with image handling
 
 ---
 
@@ -107,16 +138,28 @@ The plugin automatically converts Obsidian-specific syntax to be compatible with
 
 ### Links
 
-- `[[Internal Link]]` → `[Internal Link](/internal-link)`  
-- `[[Internal Link|Display Text]]` → `[Display Text](/internal-link)`  
+- `[[Internal Link]]` → `[Internal Link](/en/full/path/to/internal-link)` (includes locale and folder structure)
+- `[[Internal Link|Display Text]]` → `[Display Text](/en/full/path/to/internal-link)`
+- `[[Page#heading]]` → `[Page#heading](/en/path/page#heading)` (anchors preserved)
+- Relative markdown links are converted to absolute Wiki.js paths with locale
+
+### Images
+
+- `![[image.png]]` → `![image.png](/path/image.png)` (uploaded to Wiki.js assets)
+- Image paths preserve folder structure relative to the note
 
 ### Tags
 
-- `#tag` → `` `#tag` ``  
+- `#tag` → `` `#tag` ``
+- Tags from YAML frontmatter are extracted and added to the Wiki.js page
+
+### Callouts
+
+- Obsidian callouts are converted to blockquotes with bold titles
 
 ### YAML Frontmatter
 
-YAML frontmatter is automatically stripped, but tags from frontmatter are extracted and added to the Wiki.js page.
+- YAML frontmatter is automatically stripped (tags are preserved)
 
 ---
 
@@ -124,9 +167,10 @@ YAML frontmatter is automatically stripped, but tags from frontmatter are extrac
 
 Ensure your Wiki.js API token has the following permissions:
 
-- `pages:read` - To check if pages exist  
-- `pages:write` - To create new pages  
-- `pages:manage` - To update existing pages  
+- `pages:read` – To check if pages exist
+- `pages:write` – To create new pages
+- `pages:manage` – To update existing pages
+- Assets permissions for image upload (if using image upload features)
 
 ---
 
@@ -134,55 +178,88 @@ Ensure your Wiki.js API token has the following permissions:
 
 ### Connection Issues
 
-1. Verify your Wiki.js URL is correct and accessible  
-2. Check that your API token is valid and has the required permissions  
-3. Use the "Test Connection" button in settings to verify connectivity  
+1. Verify your Wiki.js URL is correct and accessible
+2. Check that your API token is valid and has the required permissions
+3. Use the "Test connection" button in settings to verify connectivity
+4. Ensure GraphQL API is enabled in Wiki.js
 
 ### Upload Failures
 
-1. Check the browser console for detailed error messages  
-2. Verify the target path doesn't contain invalid characters  
-3. Ensure you have proper permissions to create/update pages in Wiki.js  
+1. Check the Obsidian developer console (Ctrl+Shift+I) for detailed error messages
+2. Verify the target path doesn't contain invalid characters
+3. Ensure you have proper permissions to create/update pages in Wiki.js
+4. Check that the page locale matches your Wiki.js configuration
 
-### Markdown Conversion Issues
+### Link Conversion Issues
 
-1. If links aren't converting properly, check the "Auto Convert Links" setting  
-2. If you want to preserve Obsidian syntax, enable "Preserve Obsidian Syntax"  
-3. Review the content preview in the upload modal before uploading  
+1. Ensure "Auto Convert Links" is enabled in settings
+2. Check that wikilinks reference existing notes in your vault
+3. Verify locale setting matches your Wiki.js instance
+4. Images not uploading? Check that image files exist in your vault and paths are correct
 
----
+### Auto-Sync Not Working
 
-## Roadmap
-
-Future features planned for development:
-
-- 🔄 **Enhanced Sync Settings** – Customize conflict resolution  
-- 📁 **Bulk Upload Folder** – Upload entire folders with all files and images at once  
-- ✨ Additional UI improvements  
+1. Enable "Auto-sync vault" in advanced settings
+2. Adjust "Auto-sync delay" if syncs are too frequent or infrequent
+3. Check console for errors during auto-sync attempts
 
 ---
 
-## Contributing
+## Development
 
-Contributions are welcome! Feel free to submit a Pull Request.  
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for detailed development setup, including hot reload with symlinks and testing procedures.
 
-If you fork this plugin for your own enhancements, please **credit the original project**: [luashiping/note-to-wikijs](https://github.com/luashiping/note-to-wikijs).  
+### Quick Development Setup
 
----
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.  
-Original project © luashiping. Fork enhancements © YOUR NAME.
+1. Clone repository and run `npm install`
+2. Create symlink: `ln -s /path/to/vault/.obsidian/plugins/note-to-wikijs dist`
+3. Run `npm run dev` for development build with watch mode
+4. Install and enable Hot Reload plugin in Obsidian
+5. Make changes – ESBuild rebuilds automatically, Hot Reload reloads plugin
 
 ---
 
 ## Changelog
 
-### 1.0.0
+### 1.0.1 (Current)
+- Added navigation menu sync feature
+- Fixed locale foreign key constraint by making locale configurable
+- Enhanced link conversion with proper locale and folder structure support
+- Added wikilink resolution using Obsidian's metadata cache
+- Improved bulk upload with conflict resolution options
+- Added auto-sync with configurable delay
+- Fixed image upload path handling
+- Added debug logging for troubleshooting
 
-- Fork release  
-- Added bidirectional sync  
-- Added bulk upload for files and folders  
-- Improved UI and upload modal  
+### 1.0.0
+- Fork of luashiping/note-to-wikijs
+- Added bulk folder upload with conflict resolution
+- Added auto-sync capabilities
+- Improved UI and upload modal
+- Added locale support
+- Enhanced link conversion
 - Preserved all original features
+
+---
+
+## Contributing
+
+Contributions are welcome! Feel free to submit a Pull Request.
+
+If you fork this plugin for your own enhancements, please **credit the original project**: [luashiping/note-to-wikijs](https://github.com/luashiping/note-to-wikijs).
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+Original project © luashiping. Fork enhancements © contributors.
+
+---
+
+## Acknowledgments
+
+- Original plugin by [luashiping](https://github.com/luashiping/note-to-wikijs)
+- Wiki.js for their excellent GraphQL API
+- Obsidian for their extensible plugin architecture

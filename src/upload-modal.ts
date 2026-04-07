@@ -21,12 +21,37 @@ export class UploadModal extends Modal {
 	private images: Array<{ name: string; path: string }>;
 	private uploadButton: HTMLButtonElement;
 	private initializationPromise: Promise<void>;
+	private slug: string;
 
 	constructor(app: App, plugin: NoteToWikiJSPlugin, file: TFile) {
 		super(app);
 		this.plugin = plugin;
 		this.file = file;
-		this.processor = new MarkdownProcessor(plugin.settings);
+		// Create a temporary processor for path generation in resolver
+		const tempProcessor = new MarkdownProcessor(plugin.settings);
+
+		// Create wikilink resolver function
+		const wikilinkResolver = (link: string, sourceFileName?: string): string | undefined => {
+			try {
+				// Remove .md extension if present (Obsidian links can have or not have it)
+				const cleanLink = link.replace(/\.md$/i, '');
+				// Use metadataCache to resolve the link (Obsidian's standard method)
+				const targetFile = app.metadataCache.getFirstLinkpathDest(cleanLink, this.file.path);
+				if (targetFile instanceof TFile) {
+					// Compute the Wiki.js path for the target file
+					const targetFolderPath = tempProcessor.generateFolderPath(targetFile.parent?.path);
+					const targetSlug = tempProcessor.generatePath(targetFile.name, '');
+					const targetPath = targetFolderPath ? `${targetFolderPath}/${targetSlug}` : targetSlug;
+					console.debug('wikilinkResolver: resolved', link, 'to', targetPath, 'file:', targetFile.path);
+					return targetPath;
+				}
+			} catch (error) {
+				console.debug('wikilinkResolver failed for', link, ':', error);
+			}
+			return undefined;
+		};
+
+		this.processor = new MarkdownProcessor(plugin.settings, wikilinkResolver);
 		this.api = new WikiJSAPI(plugin.settings);
 		this.imageProcessor = new ImageTagProcessor(app);
 
@@ -35,6 +60,7 @@ export class UploadModal extends Modal {
 		// For root notes: use filename (e.g., "meeting-notes" for Meeting Notes.md)
 		const folderPath = this.processor.generateFolderPath(this.file.parent?.path);
 		this.pathInput = folderPath || this.processor.generatePath(this.file.name, '');
+		this.slug = this.processor.generatePath(this.file.name, '');
 		this.titleInput = this.file.name.replace(/\.md$/, ''); // Default title from filename
 		this.tagsInput = '';
 		this.descriptionInput = '';
@@ -48,6 +74,42 @@ export class UploadModal extends Modal {
 			this.close();
 			throw error; // Re-throw so onOpen() can handle it
 		});
+	}
+
+	/**
+	 * Get the full Wiki.js path including the page slug.
+	 * If the path input is just a folder, appends the slug.
+	 */
+	private get fullWikiPath(): string {
+		const input = this.pathInput.trim();
+		if (!input) {
+			console.debug('fullWikiPath: empty input, returning slug:', this.slug);
+			return this.slug;
+		}
+		// Remove trailing slashes
+		const cleanInput = input.replace(/\/+$/, '');
+
+		// Check if input already ends with the slug (exact match or with preceding slash)
+		if (cleanInput === this.slug || cleanInput.endsWith('/' + this.slug)) {
+			console.debug('fullWikiPath: input already contains slug, returning:', cleanInput);
+			return cleanInput;
+		}
+		// Assume input is a folder path, append slug
+		const result = cleanInput + '/' + this.slug;
+		console.debug('fullWikiPath: appending slug, result:', result, 'slug:', this.slug, 'input:', input);
+		return result;
+	}
+
+	/**
+	 * Get the folder portion of the full Wiki.js path (without the page slug).
+	 */
+	private get wikiFolderPath(): string {
+		const fullPath = this.fullWikiPath;
+		const lastSlash = fullPath.lastIndexOf('/');
+		if (lastSlash === -1) {
+			return '';
+		}
+		return fullPath.substring(0, lastSlash);
 	}
 
 	private async initializeFields() {
@@ -143,7 +205,7 @@ export class UploadModal extends Modal {
 		// 在上传图片前，先根据页面路径创建文件夹结构，并获取精确的文件夹 ID
 		let targetFolderId = 0;
 		try {
-			targetFolderId = await this.api.ensureAssetFolderPath(this.pathInput.trim());
+			targetFolderId = await this.api.ensureAssetFolderPath(this.wikiFolderPath);
 			console.debug(`Asset folder prepared, folderId: ${targetFolderId}`);
 		} catch (error) {
 			console.warn('Failed to create asset folder structure:', error);
@@ -225,8 +287,8 @@ export class UploadModal extends Modal {
 
 		// 使用用户最终确认的路径重新处理 markdown 内容
 		// 这样可以确保图片路径使用正确的 Wiki.js 路径
-		console.debug('Processing markdown with final path:', this.pathInput.trim());
-		const finalProcessed = this.processor.processMarkdown(this.content, this.file.name, this.pathInput.trim());
+		console.debug('Processing markdown with final path:', this.fullWikiPath);
+		const finalProcessed = this.processor.processMarkdown(this.content, this.file.name, this.fullWikiPath);
 		const processedContent = finalProcessed.content;
 
 		// 首先上传所有图片
@@ -255,7 +317,7 @@ export class UploadModal extends Modal {
 				// 	console.warn(`  Title: ${existingPage.title}`);
 				// 	console.warn(`  Path:  ${existingPage.path}`);
 				// 	console.warn(`  → New title: ${this.titleInput.trim()}`);
-				// 	console.warn(`  → New path:  ${this.pathInput.trim()}`);
+				// 	console.warn(`  → New path:  ${this.fullWikiPath}`);
 				// 	new Notice(`[DRY-RUN] Would update: "${existingPage.title}" (ID: ${pageId}, path: ${existingPage.path})`);
 				// 	this.uploadButton.textContent = 'Upload';
 				// 	this.uploadButton.disabled = false;
@@ -264,7 +326,7 @@ export class UploadModal extends Modal {
 
 				result = await this.api.updatePage(
 					pageId,
-					this.pathInput.trim(),
+					this.fullWikiPath,
 					this.titleInput.trim(),
 					processedContent,
 					this.descriptionInput.trim() || undefined,
@@ -272,7 +334,7 @@ export class UploadModal extends Modal {
 				);
 			} else {
 				result = await this.api.createPage(
-					this.pathInput.trim(),
+					this.fullWikiPath,
 					this.titleInput.trim(),
 					processedContent,
 					this.descriptionInput.trim() || undefined,
@@ -297,8 +359,8 @@ export class UploadModal extends Modal {
 
 	private async checkIfPageExists(): Promise<WikiJSPage | null> {
 		try {
-			console.debug('Checking if page exists at path:', this.pathInput.trim());
-			const page = await this.api.getPageByPath(this.pathInput.trim());
+			console.debug('Checking if page exists at path:', this.fullWikiPath);
+			const page = await this.api.getPageByPath(this.fullWikiPath);
 			return page; // 如果页面不存在，getPageByPath 会返回 null
 		} catch {
 			// Page doesn't exist
@@ -321,8 +383,8 @@ export class UploadModal extends Modal {
 			modal.titleEl.setText('Page already exists');
 			
 			const content = modal.contentEl;
-			content.createEl('p', { 
-				text: `A page already exists at path "${this.pathInput}". What would you like to do?`
+			content.createEl('p', {
+				text: `A page already exists at path "${this.fullWikiPath}". What would you like to do?`
 			});
 			
 			content.createEl('p', { 

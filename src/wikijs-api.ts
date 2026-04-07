@@ -1,5 +1,5 @@
 import { requestUrl } from 'obsidian';
-import { WikiJSSettings, WikiJSCreatePageMutation, WikiJSUpdatePageMutation, WikiJSPageListResponse, UploadResult, WikiJSPage, NavigationTreeResponse, NavigationUpdateResponse, NavigationItemInput } from './types';
+import { WikiJSSettings, WikiJSCreatePageMutation, WikiJSUpdatePageMutation, WikiJSPageListResponse, UploadResult, WikiJSPage, WikiJSPageWithContent } from './types';
 
 export class WikiJSAPI {
 	private settings: WikiJSSettings;
@@ -110,6 +110,51 @@ export class WikiJSAPI {
 		return exactMatch || null;
 	}
 
+	async getPageContent(id: number): Promise<WikiJSPageWithContent | null> {
+		const query = `
+			query ($id: Int!) {
+				pages {
+					single(id: $id) {
+						id
+						path
+						title
+						description
+						content
+						tags {
+							title
+						}
+					}
+				}
+			}
+		`;
+		try {
+			const result = await this.makeGraphQLRequest(query, { id }) as {
+				pages: {
+					single: {
+						id: string;
+						path: string;
+						title: string;
+						description?: string;
+						content: string;
+						tags: Array<{ title: string }>;
+					};
+				};
+			};
+			const page = result.pages.single;
+			return {
+				id: page.id,
+				path: page.path,
+				title: page.title,
+				description: page.description,
+				content: page.content,
+				tags: page.tags?.map(tag => tag.title) || []
+			};
+		} catch (error) {
+			console.error('Failed to fetch page content:', error);
+			return null;
+		}
+	}
+
 	async createPage(
 		path: string,
 		title: string,
@@ -171,13 +216,14 @@ export class WikiJSAPI {
 			};
 
 			const result = await this.makeGraphQLRequest(mutation, variables) as WikiJSCreatePageMutation;
-			
+			const locale = this.settings.locale || 'en';
+
 			if (result.pages.create.responseResult.succeeded) {
 				return {
 					success: true,
 					message: 'Page created successfully',
 					pageId: result.pages.create.page.id,
-					pageUrl: `${this.settings.wikiUrl}/${normalizedPath}`
+					pageUrl: `${this.settings.wikiUrl}/${locale}/${normalizedPath}`
 				};
 			} else {
 				return {
@@ -248,13 +294,14 @@ export class WikiJSAPI {
 			};
 
 			const result = await this.makeGraphQLRequest(mutation, variables) as WikiJSUpdatePageMutation;
-			
+			const locale = this.settings.locale || 'en';
+
 			if (result.pages.update.responseResult.succeeded) {
 				return {
 					success: true,
 					message: 'Page updated successfully',
 					pageId: result.pages.update.page.id,
-					pageUrl: `${this.settings.wikiUrl}/${normalizedPath}`
+					pageUrl: `${this.settings.wikiUrl}/${locale}/${normalizedPath}`
 				};
 			} else {
 				return {
@@ -519,46 +566,6 @@ export class WikiJSAPI {
 		}
 	}
 
-	/**
-	 * Get the current navigation tree from Wiki.js
-	 */
-	async getNavigationTree(): Promise<NavigationTreeResponse> {
-		const query = `
-			{
-				navigation {
-					tree {
-						id
-						kind
-						label
-						icon
-						targetType
-						target
-					}
-				}
-			}
-		`;
-		return await this.makeGraphQLRequest(query) as NavigationTreeResponse;
-	}
 
-	/**
-	 * Update the navigation tree in Wiki.js
-	 */
-	async updateNavigationTree(tree: NavigationItemInput[]): Promise<NavigationUpdateResponse> {
-		const mutation = `
-			mutation UpdateNavigationTree($tree: [NavigationItemInput]!) {
-				navigation {
-					updateTree(tree: $tree) {
-						responseResult {
-							succeeded
-							errorCode
-							slug
-							message
-						}
-					}
-				}
-			}
-		`;
-		return await this.makeGraphQLRequest(mutation, { tree }) as NavigationUpdateResponse;
-	}
 }
 

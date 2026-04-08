@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: WikiJSSettings = {
 	autoSyncEnabled: false,
 	autoSyncDelay: 5, // seconds
 	autoSyncImages: false,
+	autoSyncDelete: false, // delete pages when files are deleted in Obsidian
 };
 
 export class WikiJSSettingTab extends PluginSettingTab {
@@ -199,6 +200,16 @@ export class WikiJSSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.autoSyncImages ?? false)
 				.onChange(async (value) => {
 					this.plugin.settings.autoSyncImages = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Auto-sync deletions')
+			.setDesc('When enabled, deleting or moving notes in Obsidian will delete corresponding pages in Wiki.js')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autoSyncDelete ?? false)
+				.onChange(async (value) => {
+					this.plugin.settings.autoSyncDelete = value;
 					await this.plugin.saveSettings();
 				}));
 

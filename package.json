@@ -1,6 +1,6 @@
 {
   "name": "wikijs-sync",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Obsidian plugin to sync notes with Wiki.js",
   "main": "main.js",
   "scripts": {

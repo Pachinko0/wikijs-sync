@@ -71,7 +71,10 @@ export class MarkdownProcessor {
 	private convertObsidianLinks(content: string, pagePath?: string, fileName?: string): string {
 		// Convert [[Link]] to [Link](/locale/path), but ignore image links
 		const locale = this.settings.locale || 'en';
-		console.debug('convertObsidianLinks: pagePath=', pagePath, 'locale=', locale, 'fileName=', fileName);
+		console.debug('convertObsidianLinks: pagePath=', pagePath, 'locale=', locale, 'fileName=', fileName, 'has wikilinkResolver?', !!this.wikilinkResolver);
+		if (pagePath === undefined) {
+			console.debug('convertObsidianLinks WARNING: pagePath is undefined - link conversion may be skipped');
+		}
 		return content.replace(/\[\[([^\]|]+)(\|([^\]]+))?\]\]/g, (match, link, pipe, displayText) => {
 			// Skip if this is an image link (ends with image extension)
 			if (/\.(png|jpg|jpeg|gif|svg|webp|bmp|ico|tiff|tif|avif|heic|heif)$/i.test(link)) {
@@ -99,10 +102,11 @@ export class MarkdownProcessor {
 					console.debug('convertObsidianLinks: wikilinkResolver returned undefined, using fallback:', targetPath);
 				}
 			} else {
+				console.debug('convertObsidianLinks: NO wikilinkResolver, using fallback');
 				targetPath = this.resolveWikiLinkToWikiPath(pageRef, pagePath);
 			}
 			const url = `/${locale}/${targetPath}${anchor}`;
-			console.debug('convertObsidianLinks: link=', link, 'pageRef=', pageRef, 'targetPath=', targetPath, 'url=', url);
+			console.debug('convertObsidianLinks: link=', link, 'pageRef=', pageRef, 'targetPath=', targetPath, 'url=', url, 'resolver used?', this.wikilinkResolver ? 'yes' : 'no');
 			return `[${text}](${url}) <!-- ${match} -->`;
 		});
 	}
@@ -274,6 +278,7 @@ export class MarkdownProcessor {
 	 * @returns The resolved Wiki.js path for the target page (without locale prefix)
 	 */
 	private resolveWikiLinkToWikiPath(link: string, sourcePagePath?: string): string {
+		console.debug('FALLBACK resolveWikiLinkToWikiPath called: link=', link, 'sourcePagePath=', sourcePagePath);
 		// Remove .md extension if present
 		let cleanLink = link.replace(/\.md$/i, '');
 		console.debug('resolveWikiLinkToWikiPath: link=', link, 'cleanLink=', cleanLink, 'sourcePagePath=', sourcePagePath);

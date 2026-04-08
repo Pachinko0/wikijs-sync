@@ -1,7 +1,7 @@
 {
 	"id": "note-to-wikijs",
 	"name": "Wikijs-Sync",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"minAppVersion": "0.15.0",
 	"description": "Sync your Obsidian notes with Wiki.js through its GraphQL API.",
 	"author": "Pachinko0",

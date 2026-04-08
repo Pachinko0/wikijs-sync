@@ -11,6 +11,8 @@ An Obsidian plugin that allows you to upload your notes to a Wiki.js instance th
 - 📤 **Individual Note Upload** – Upload current note or any file via command palette, ribbon icon, or right-click context menu
 - 🗂️ **Bulk Folder Upload** – Upload entire folders with configurable conflict resolution (overwrite, skip, ask)
 - 🔄 **Auto-Sync Vault** – Automatically sync modified notes to Wiki.js after configurable delay
+- 🗑️ **Auto-Sync Deletions** – Delete Wiki.js pages when notes are deleted in Obsidian (optional)
+- 🧹 **Cleanup Orphaned Pages** – Command to delete Wiki.js pages without corresponding Obsidian files
 - 🖼️ **Automatic Image Upload** – Images referenced in notes are uploaded to Wiki.js assets with proper folder structure
 - 🏷️ **Tag & Metadata Support** – Extracts tags from YAML frontmatter and inline hashtags
 - 🌐 **Locale Support** – Configurable locale for new pages (default: 'en')
@@ -85,6 +87,7 @@ Open Obsidian Settings > Community Plugins > Wikijs-Sync to configure:
 - **Auto-Sync Vault** – Automatically sync modified notes to Wiki.js
 - **Auto-Sync Delay** – Delay in seconds before syncing a modified note (prevents too frequent updates)
 - **Auto-Sync Images** – Upload images referenced in notes during auto-sync
+- **Auto-Sync Deletions** – Delete Wiki.js pages when notes are deleted in Obsidian (default: disabled)
 
 ---
 
@@ -119,6 +122,7 @@ OR
 - **Force Sync Everything** – Upload all notes, overwriting existing Wiki.js pages
 - **Sync New Files Only** – Upload only notes that don't already exist in Wiki.js
 - **Auto-Sync** – Automatically sync modified notes after the configured delay
+- **Clean Up Deleted Notes** – Delete Wiki.js pages without corresponding Obsidian files
 
 ### Upload Modal
 
@@ -213,7 +217,16 @@ See [DEVELOPMENT.md](./DEVELOPMENT.md) for detailed development setup, including
 
 ## Changelog
 
-### 1.1.0 (Current)
+### 1.2.0
+- Added auto-sync deletion feature – delete Wiki.js pages when notes are deleted in Obsidian
+- Added cleanup command – delete orphaned Wiki.js pages without corresponding Obsidian files
+- New setting: "Auto-sync deletions" (default: disabled) in plugin settings
+- Enhanced auto-sync to handle both syncs and deletions in correct order
+- Added folder deletion notice (folder sync not yet implemented)
+- Fixed handling of renamed/moved notes with improved path computation
+- Improved error handling and logging for deletion operations
+
+### 1.1.0
 - Added bidirectional wikilink preservation for perfect round-trip sync
 - Original Obsidian wikilinks are preserved as HTML comments when uploading to Wiki.js
 - When syncing from Wiki.js back to Obsidian, original wikilinks are restored exactly

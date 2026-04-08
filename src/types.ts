@@ -10,6 +10,7 @@ export interface WikiJSSettings {
 	autoSyncEnabled?: boolean;
 	autoSyncDelay?: number; // in seconds
 	autoSyncImages?: boolean;
+	autoSyncDelete?: boolean; // delete pages when files are deleted in Obsidian
 }
 
 export interface WikiJSPageResponse {
@@ -56,6 +57,19 @@ export interface WikiJSUpdatePageMutation {
 				message: string;
 			};
 			page: WikiJSPageResponse;
+		};
+	};
+}
+
+export interface WikiJSDeletePageMutation {
+	pages: {
+		delete: {
+			responseResult: {
+				succeeded: boolean;
+				errorCode: number;
+				slug: string;
+				message: string;
+			};
 		};
 	};
 }

@@ -9,7 +9,8 @@ import { ImageTagProcessor } from './src/image-tag-processor';
 export default class NoteToWikiJSPlugin extends Plugin {
 	settings: WikiJSSettings;
 	private autoSyncTimeout: number | null = null;
-	private filesToSync: Set<TFile> = new Set();
+	private filesToSync: Map<TFile, string | null> = new Map();
+	private filesToDelete: Set<string> = new Set(); // Obsidian paths of deleted files
 	private autoSyncEventListeners: Array<() => void> = [];
 
 	async onload() {
@@ -87,6 +88,15 @@ export default class NoteToWikiJSPlugin extends Plugin {
 			name: 'Sync all notes from Wiki.js',
 			callback: () => {
 				void this.syncAllFromWikiJS();
+			}
+		});
+
+		// Add command to clean up deleted notes in Wiki.js
+		this.addCommand({
+			id: 'cleanup-deleted-notes',
+			name: 'Clean up deleted notes in Wiki.js',
+			callback: () => {
+				void this.cleanupDeletedNotes();
 			}
 		});
 
@@ -192,7 +202,20 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		const renameListener = this.app.vault.on('rename', (file, oldPath) => {
 			if (file instanceof TFile && file.extension === 'md') {
 				console.debug('Auto-sync: file renamed', oldPath, '->', file.path);
-				this.scheduleFileSync(file, delay);
+				this.scheduleFileSync(file, delay, oldPath);
+			}
+		});
+
+		// Listen for file deletions (only if autoSyncDelete is enabled)
+		const deleteListener = this.app.vault.on('delete', (file) => {
+			if (!(this.settings.autoSyncDelete ?? false)) return;
+			if (file instanceof TFile && file.extension === 'md') {
+				console.debug('Auto-sync: file deleted', file.path);
+				this.scheduleFileDelete(file.path, delay);
+			} else if (file instanceof TFolder) {
+				console.debug('Auto-sync: folder deleted', file.path);
+				// TODO: handle folder deletions (delete all pages under that path)
+				this.showNotice(`Folder deletion sync not yet implemented for ${file.path}. Wiki.js pages may remain.`);
 			}
 		});
 
@@ -200,6 +223,7 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		this.autoSyncEventListeners.push(() => this.app.vault.offref(modifyListener));
 		this.autoSyncEventListeners.push(() => this.app.vault.offref(createListener));
 		this.autoSyncEventListeners.push(() => this.app.vault.offref(renameListener));
+		this.autoSyncEventListeners.push(() => this.app.vault.offref(deleteListener));
 	}
 
 	/**
@@ -214,6 +238,7 @@ export default class NoteToWikiJSPlugin extends Plugin {
 
 		// Clear files to sync
 		this.filesToSync.clear();
+		this.filesToDelete.clear();
 
 		// Remove all event listeners
 		for (const cleanup of this.autoSyncEventListeners) {
@@ -225,10 +250,25 @@ export default class NoteToWikiJSPlugin extends Plugin {
 	/**
 	 * Schedule a file for sync after delay
 	 */
-	private scheduleFileSync(file: TFile, delay: number) {
-		// Add file to sync set
-		this.filesToSync.add(file);
+	private scheduleFileSync(file: TFile, delay: number, oldPath: string | null = null) {
+		// Add file to sync set with oldPath (if rename)
+		this.filesToSync.set(file, oldPath);
+		this.scheduleAutoSyncProcessing(delay);
+	}
 
+	/**
+	 * Schedule a file deletion after delay
+	 */
+	private scheduleFileDelete(oldPath: string, delay: number) {
+		// Add path to delete set
+		this.filesToDelete.add(oldPath);
+		this.scheduleAutoSyncProcessing(delay);
+	}
+
+	/**
+	 * Schedule auto-sync processing after delay (creates timeout if not already set)
+	 */
+	private scheduleAutoSyncProcessing(delay: number) {
 		// Clear existing timeout
 		if (this.autoSyncTimeout !== null) {
 			window.clearTimeout(this.autoSyncTimeout);
@@ -241,22 +281,20 @@ export default class NoteToWikiJSPlugin extends Plugin {
 	}
 
 	/**
-	 * Process all files scheduled for sync
+	 * Process all files scheduled for sync and deletion
 	 */
 	private async processAutoSync() {
-		if (this.filesToSync.size === 0) {
+		const hasSyncs = this.filesToSync.size > 0;
+		const hasDeletions = this.filesToDelete.size > 0;
+
+		if (!hasSyncs && !hasDeletions) {
 			return;
 		}
-
-		const files = Array.from(this.filesToSync);
-		this.filesToSync.clear();
-		this.autoSyncTimeout = null;
-
-		console.debug(`Auto-syncing ${files.length} modified file(s)`);
 
 		// Validate settings
 		if (!this.settings.wikiUrl || !this.settings.apiToken) {
 			this.showNotice('Cannot auto-sync: Wiki.js settings not configured');
+			this.clearQueues();
 			return;
 		}
 
@@ -266,52 +304,137 @@ export default class NoteToWikiJSPlugin extends Plugin {
 			const isConnected = await api.checkConnection();
 			if (!isConnected) {
 				this.showNotice('Cannot auto-sync: Unable to connect to Wiki.js');
+				this.clearQueues();
 				return;
 			}
 		} catch (error) {
 			console.error('Auto-sync connection check failed:', error);
 			this.showNotice('Auto-sync failed: Connection error');
+			this.clearQueues();
 			return;
 		}
 
-		// Process each file
-		let successCount = 0;
-		let errorCount = 0;
+		let deleteSuccessCount = 0;
+		let deleteErrorCount = 0;
+		let syncSuccessCount = 0;
+		let syncErrorCount = 0;
 
-		for (const file of files) {
-			try {
-				await this.autoSyncFile(file, api);
-				successCount++;
-			} catch (error) {
-				console.error(`Auto-sync failed for ${file.path}:`, error);
-				errorCount++;
+		// Process deletions first
+		if (hasDeletions && (this.settings.autoSyncDelete ?? false)) {
+			const deletions = Array.from(this.filesToDelete);
+			this.filesToDelete.clear();
+			console.debug(`Auto-sync: processing ${deletions.length} deletion(s)`);
+
+			for (const oldPath of deletions) {
+				try {
+					await this.autoSyncDeleteFile(oldPath, api);
+					deleteSuccessCount++;
+				} catch (error) {
+					console.error(`Auto-sync deletion failed for ${oldPath}:`, error);
+					deleteErrorCount++;
+				}
+			}
+		} else if (hasDeletions) {
+			// autoSyncDelete is disabled, just clear the queue
+			this.filesToDelete.clear();
+		}
+
+		// Process syncs
+		if (hasSyncs) {
+			const entries = Array.from(this.filesToSync.entries());
+			this.filesToSync.clear();
+			console.debug(`Auto-syncing ${entries.length} modified file(s)`);
+
+			for (const [file, oldPath] of entries) {
+				try {
+					await this.autoSyncFile(file, api, oldPath);
+					syncSuccessCount++;
+				} catch (error) {
+					console.error(`Auto-sync failed for ${file.path}:`, error);
+					syncErrorCount++;
+				}
 			}
 		}
 
-		if (successCount > 0 || errorCount > 0) {
-			this.showNotice(`Auto-sync completed: ${successCount} successful, ${errorCount} failed`);
+		// Clear timeout
+		this.autoSyncTimeout = null;
+
+		// Show notices
+		const notices = [];
+		if (deleteSuccessCount > 0 || deleteErrorCount > 0) {
+			notices.push(`deletions: ${deleteSuccessCount} successful, ${deleteErrorCount} failed`);
 		}
+		if (syncSuccessCount > 0 || syncErrorCount > 0) {
+			notices.push(`syncs: ${syncSuccessCount} successful, ${syncErrorCount} failed`);
+		}
+		if (notices.length > 0) {
+			this.showNotice(`Auto-sync completed: ${notices.join('; ')}`);
+		}
+	}
+
+	/**
+	 * Clear both sync and delete queues
+	 */
+	private clearQueues() {
+		this.filesToSync.clear();
+		this.filesToDelete.clear();
+		this.autoSyncTimeout = null;
 	}
 
 	/**
 	 * Sync a single file to Wiki.js
 	 */
-	private async autoSyncFile(file: TFile, api: WikiJSAPI) {
+	private async autoSyncFile(file: TFile, api: WikiJSAPI, oldPath: string | null = null) {
 		console.debug(`Auto-syncing file: ${file.path}`);
 
 		// Read file content
 		const content = await this.app.vault.read(file);
-		const processor = new MarkdownProcessor(this.settings, undefined);
-		const path = processor.generatePath(file.name, file.parent?.path);
-		console.debug('Auto-sync: generated path:', path, 'for file:', file.path);
-		const processed = processor.processMarkdown(content, file.name, path);
+		const wikilinkResolver = this.createWikilinkResolver(file);
+		const processor = new MarkdownProcessor(this.settings, wikilinkResolver);
+		const newWikiPath = processor.generatePath(file.name, file.parent?.path);
+		console.debug('Auto-sync: generated path:', newWikiPath, 'for file:', file.path);
+		const processed = processor.processMarkdown(content, file.name, newWikiPath);
 		const tags = processor.extractTags(content);
 
-		// Check if page exists
+		// Compute old Wiki.js path if rename
+		let oldWikiPath: string | null = null;
+		if (oldPath) {
+			// Extract folder and filename from oldPath (Obsidian vault path)
+			const oldSegments = oldPath.split('/').filter(s => s.length > 0);
+			if (oldSegments.length > 0) {
+				const oldFileName = oldSegments.pop()!;
+				const oldFolderPath = oldSegments.join('/');
+				oldWikiPath = processor.generatePath(oldFileName, oldFolderPath || undefined);
+				console.debug('Auto-sync: old Wiki.js path:', oldWikiPath, 'from oldPath:', oldPath);
+			}
+		}
+
+		// Delete old page if path changed and old page exists
+		if (oldWikiPath && oldWikiPath !== newWikiPath) {
+			try {
+				const oldPage = await api.getPageByPath(oldWikiPath);
+				if (oldPage) {
+					const oldPageId = Number(oldPage.id);
+					if (!isNaN(oldPageId)) {
+						console.debug(`Auto-sync: deleting old page at ${oldWikiPath} (ID: ${oldPageId})`);
+						const deleteResult = await api.deletePage(oldPageId);
+						if (deleteResult.success) {
+							console.debug(`Auto-sync: successfully deleted old page at ${oldWikiPath}`);
+						} else {
+							console.warn(`Auto-sync: failed to delete old page at ${oldWikiPath}: ${deleteResult.message}`);
+						}
+					}
+				}
+			} catch (error) {
+				console.warn(`Auto-sync: error while checking/deleting old page at ${oldWikiPath}:`, error);
+			}
+		}
+
+		// Check if page exists at new path
 		let existingPage;
 		try {
-			console.debug('Auto-sync: checking if page exists at path:', path);
-			existingPage = await api.getPageByPath(path);
+			console.debug('Auto-sync: checking if page exists at path:', newWikiPath);
+			existingPage = await api.getPageByPath(newWikiPath);
 			if (existingPage) {
 				console.debug('Auto-sync: page exists, ID:', existingPage.id);
 			} else {
@@ -331,7 +454,7 @@ export default class NoteToWikiJSPlugin extends Plugin {
 			// Create asset folder structure
 			let targetFolderId = 0;
 			try {
-				targetFolderId = await api.ensureAssetFolderPath(path.trim());
+				targetFolderId = await api.ensureAssetFolderPath(newWikiPath.trim());
 				console.debug('Auto-sync: asset folder ID:', targetFolderId);
 			} catch (error) {
 				console.warn('Failed to create asset folder structure:', error as any);
@@ -362,7 +485,7 @@ export default class NoteToWikiJSPlugin extends Plugin {
 			}
 			result = await api.updatePage(
 				pageId,
-				path,
+				newWikiPath,
 				processed.title,
 				processed.content,
 				undefined,
@@ -371,7 +494,7 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		} else {
 			console.debug('Auto-sync: creating new page');
 			result = await api.createPage(
-				path,
+				newWikiPath,
 				processed.title,
 				processed.content,
 				undefined,
@@ -385,6 +508,85 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		}
 
 		console.debug(`Auto-sync successful for ${file.path}`);
+	}
+
+	/**
+	 * Compute Wiki.js path from an Obsidian file path (e.g., "folder/note.md")
+	 */
+	private computeWikiPathFromObsidianPath(obsidianPath: string): string {
+		const processor = new MarkdownProcessor(this.settings);
+		const segments = obsidianPath.split('/').filter(s => s.length > 0);
+		if (segments.length === 0) {
+			return '';
+		}
+		const fileName = segments.pop()!;
+		const folderPath = segments.join('/');
+		return processor.generatePath(fileName, folderPath || undefined);
+	}
+
+	/**
+	 * Delete a Wiki.js page corresponding to a deleted Obsidian file
+	 */
+	private async autoSyncDeleteFile(oldPath: string, api: WikiJSAPI): Promise<void> {
+		console.debug(`Auto-sync deleting file: ${oldPath}`);
+		const wikiPath = this.computeWikiPathFromObsidianPath(oldPath);
+		if (!wikiPath) {
+			console.warn(`Cannot compute Wiki.js path from ${oldPath}`);
+			return;
+		}
+
+		try {
+			const page = await api.getPageByPath(wikiPath);
+			if (page) {
+				const pageId = Number(page.id);
+				if (!isNaN(pageId)) {
+					console.debug(`Auto-sync: deleting page at ${wikiPath} (ID: ${pageId})`);
+					const deleteResult = await api.deletePage(pageId);
+					if (deleteResult.success) {
+						console.debug(`Auto-sync: successfully deleted page at ${wikiPath}`);
+					} else {
+						console.warn(`Auto-sync: failed to delete page at ${wikiPath}: ${deleteResult.message}`);
+						throw new Error(`Failed to delete page: ${deleteResult.message}`);
+					}
+				} else {
+					console.warn(`Auto-sync: invalid page ID ${page.id} for path ${wikiPath}`);
+				}
+			} else {
+				console.debug(`Auto-sync: page not found at ${wikiPath}, nothing to delete`);
+			}
+		} catch (error) {
+			console.error(`Auto-sync: error while deleting page at ${wikiPath}:`, error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Create a wikilink resolver function for a given source file.
+	 * The resolver uses Obsidian's metadata cache to find the target file
+	 * and computes its Wiki.js path.
+	 */
+	public createWikilinkResolver(sourceFile: TFile): (link: string, sourceFileName?: string) => string | undefined {
+		const processor = new MarkdownProcessor(this.settings);
+		return (link: string, sourceFileName?: string) => {
+			console.debug('wikilinkResolver CALLED: link=', link, 'sourceFileName=', sourceFileName, 'sourceFile.path=', sourceFile.path);
+			try {
+				const cleanLink = link.replace(/\.md$/i, '');
+				console.debug('wikilinkResolver: attempting to resolve', link, 'clean:', cleanLink, 'from source:', sourceFile.path);
+				const targetFile = this.app.metadataCache.getFirstLinkpathDest(cleanLink, sourceFile.path);
+				if (targetFile instanceof TFile) {
+					const targetFolderPath = processor.generateFolderPath(targetFile.parent?.path);
+					const targetSlug = processor.generatePath(targetFile.name, '');
+					const targetPath = targetFolderPath ? `${targetFolderPath}/${targetSlug}` : targetSlug;
+					console.debug('wikilinkResolver: resolved', link, 'to', targetPath, 'target file:', targetFile.path);
+					return targetPath;
+				} else {
+					console.debug('wikilinkResolver: target file not found for link', link);
+				}
+			} catch (error) {
+				console.debug('wikilinkResolver failed for', link, ':', error);
+			}
+			return undefined;
+		};
 	}
 
 	private async uploadCurrentNote() {
@@ -527,7 +729,6 @@ export default class NoteToWikiJSPlugin extends Plugin {
 
 		this.showNotice(`Starting force sync of ${files.length} files...`);
 
-		const processor = new MarkdownProcessor(this.settings, undefined);
 		let successCount = 0;
 		let errorCount = 0;
 
@@ -537,8 +738,11 @@ export default class NoteToWikiJSPlugin extends Plugin {
 				this.showNotice(`Processing ${i + 1}/${files.length}: ${file.name}`, 2000);
 
 				// Read file content
+				const wikilinkResolver = this.createWikilinkResolver(file);
+				const processor = new MarkdownProcessor(this.settings, wikilinkResolver);
 				const content = await this.app.vault.read(file);
 				const path = processor.generatePath(file.name, file.parent?.path);
+				console.debug('Bulk sync: processing file', file.path, 'Wiki.js path:', path);
 				const processed = processor.processMarkdown(content, file.name, path);
 				const tags = processor.extractTags(content);
 
@@ -647,7 +851,6 @@ export default class NoteToWikiJSPlugin extends Plugin {
 
 		this.showNotice(`Starting new-only sync of ${files.length} files...`);
 
-		const processor = new MarkdownProcessor(this.settings, undefined);
 		let successCount = 0;
 		let errorCount = 0;
 		let skippedCount = 0;
@@ -658,8 +861,11 @@ export default class NoteToWikiJSPlugin extends Plugin {
 				this.showNotice(`Processing ${i + 1}/${files.length}: ${file.name}`, 2000);
 
 				// Read file content
+				const wikilinkResolver = this.createWikilinkResolver(file);
+				const processor = new MarkdownProcessor(this.settings, wikilinkResolver);
 				const content = await this.app.vault.read(file);
 				const path = processor.generatePath(file.name, file.parent?.path);
+				console.debug('Bulk sync: processing file', file.path, 'Wiki.js path:', path);
 				const processed = processor.processMarkdown(content, file.name, path);
 				const tags = processor.extractTags(content);
 
@@ -949,6 +1155,86 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		}
 
 		this.showNotice(`Sync completed: ${successCount} successful, ${errorCount} failed, ${skippedCount} skipped`);
+	}
+
+	async cleanupDeletedNotes(): Promise<void> {
+		// Validate settings
+		if (!this.settings.wikiUrl || !this.settings.apiToken) {
+			this.showNotice('Please configure Wiki.js settings first (URL and API Token)');
+			return;
+		}
+
+		// Test connection
+		const api = new WikiJSAPI(this.settings);
+		const isConnected = await api.checkConnection();
+
+		if (!isConnected) {
+			this.showNotice('Cannot connect to Wiki.js. Please check your settings.');
+			return;
+		}
+
+		// Get all pages from Wiki.js
+		this.showNotice('Fetching page list from Wiki.js...');
+		let pageList;
+		try {
+			const response = await api.getPages();
+			pageList = response.pages.list;
+		} catch (error) {
+			console.error('Failed to fetch page list:', error);
+			this.showNotice('Failed to fetch page list from Wiki.js');
+			return;
+		}
+
+		if (pageList.length === 0) {
+			this.showNotice('No pages found in Wiki.js');
+			return;
+		}
+
+		this.showNotice(`Checking ${pageList.length} pages for deletions...`);
+
+		let deletedCount = 0;
+		let errorCount = 0;
+		let skippedCount = 0;
+
+		for (let i = 0; i < pageList.length; i++) {
+			const page = pageList[i];
+			this.showNotice(`Processing ${i + 1}/${pageList.length}: ${page.title}`, 2000);
+
+			try {
+				console.debug(`cleanupDeletedNotes: checking page "${page.title}" with path "${page.path}"`);
+				// Check if there's a corresponding Obsidian file
+				const existingFile = this.findObsidianFileByWikiPath(page.path);
+				console.debug(`cleanupDeletedNotes: findObsidianFileByWikiPath("${page.path}") returned:`, existingFile?.path || null);
+
+				if (!existingFile) {
+					// No Obsidian file found, delete the page
+					const pageId = Number(page.id);
+					if (isNaN(pageId)) {
+						console.error(`Invalid page ID: ${page.id}`);
+						errorCount++;
+						continue;
+					}
+
+					console.debug(`cleanupDeletedNotes: deleting orphaned page at ${page.path} (ID: ${pageId})`);
+					const deleteResult = await api.deletePage(pageId);
+					if (deleteResult.success) {
+						console.debug(`cleanupDeletedNotes: successfully deleted page at ${page.path}`);
+						deletedCount++;
+					} else {
+						console.warn(`cleanupDeletedNotes: failed to delete page at ${page.path}: ${deleteResult.message}`);
+						errorCount++;
+					}
+				} else {
+					// Obsidian file exists, skip
+					skippedCount++;
+				}
+			} catch (error) {
+				console.error(`Error processing page ${page.path}:`, error);
+				errorCount++;
+			}
+		}
+
+		this.showNotice(`Cleanup completed: ${deletedCount} deleted, ${errorCount} errors, ${skippedCount} skipped`);
 	}
 
 	private wikiPathToObsidianPath(wikiPath: string): { folderPath: string; fileName: string } {
@@ -1389,7 +1675,6 @@ class BulkUploadModal extends Modal {
 		uploadButton.disabled = true;
 
 		const api = new WikiJSAPI(this.plugin.settings);
-		const processor = new MarkdownProcessor(this.plugin.settings, undefined);
 
 		let completed = 0;
 		const total = this.files.length;
@@ -1399,8 +1684,11 @@ class BulkUploadModal extends Modal {
 			this.updateFileStatusInModal(file.path);
 
 			try {
+				const wikilinkResolver = this.plugin.createWikilinkResolver(file);
+				const processor = new MarkdownProcessor(this.plugin.settings, wikilinkResolver);
 				const content = await this.app.vault.read(file);
 				const path = processor.generatePath(file.name, file.parent?.path);
+				console.debug('BulkUploadModal: processing file', file.path, 'Wiki.js path:', path);
 				const processed = processor.processMarkdown(content, file.name, path);
 				const tags = processor.extractTags(content);
 

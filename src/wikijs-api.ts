@@ -1,5 +1,5 @@
 import { requestUrl } from 'obsidian';
-import { WikiJSSettings, WikiJSCreatePageMutation, WikiJSUpdatePageMutation, WikiJSPageListResponse, UploadResult, WikiJSPage, WikiJSPageWithContent } from './types';
+import { WikiJSSettings, WikiJSCreatePageMutation, WikiJSUpdatePageMutation, WikiJSDeletePageMutation, WikiJSPageListResponse, UploadResult, WikiJSPage, WikiJSPageWithContent } from './types';
 
 export class WikiJSAPI {
 	private settings: WikiJSSettings;
@@ -313,6 +313,43 @@ export class WikiJSAPI {
 			return {
 				success: false,
 				message: `Error updating page: ${error.message}`
+			};
+		}
+	}
+
+	async deletePage(id: number): Promise<UploadResult> {
+		const mutation = `
+			mutation($id: Int!) {
+				pages {
+					delete(id: $id) {
+						responseResult {
+							succeeded
+							errorCode
+							slug
+							message
+						}
+					}
+				}
+			}
+		`;
+
+		try {
+			const result = await this.makeGraphQLRequest(mutation, { id }) as WikiJSDeletePageMutation;
+			if (result.pages.delete.responseResult.succeeded) {
+				return {
+					success: true,
+					message: 'Page deleted successfully'
+				};
+			} else {
+				return {
+					success: false,
+					message: result.pages.delete.responseResult.message || 'Unknown error occurred'
+				};
+			}
+		} catch (error) {
+			return {
+				success: false,
+				message: `Error deleting page: ${error.message}`
 			};
 		}
 	}

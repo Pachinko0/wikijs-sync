@@ -16,8 +16,8 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		await this.loadSettings();
 
 		// Add ribbon icon
-		const ribbonIconEl = this.addRibbonIcon('upload', 'Upload current note to wiki.js', (evt: MouseEvent) => {
-			void this.uploadCurrentNote();
+		const ribbonIconEl = this.addRibbonIcon('sync', 'Sync all notes to Wiki.js', (evt: MouseEvent) => {
+			void this.forceSyncEverything();
 		});
 		ribbonIconEl.addClass('wikijs-ribbon-icon');
 
@@ -135,13 +135,13 @@ export default class NoteToWikiJSPlugin extends Plugin {
 		// Initialize auto-sync
 		this.initializeAutoSync();
 
-		console.debug('Note to Wiki.js plugin loaded');
+		console.debug('Wikijs-Sync plugin loaded');
 	}
 
 	onunload() {
 		// Clean up auto-sync
 		this.cleanupAutoSync();
-		console.debug('Note to Wiki.js plugin unloaded');
+		console.debug('Wikijs-Sync plugin unloaded');
 	}
 
 	async loadSettings() {

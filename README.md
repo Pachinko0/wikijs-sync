@@ -1,4 +1,4 @@
-# Note to Wiki.js
+# Wikijs-Sync
 
 An Obsidian plugin that allows you to upload your notes to a Wiki.js instance through its GraphQL API. Supports automatic image upload, markdown conversion, bulk uploads, and auto-sync.
 
@@ -33,7 +33,7 @@ An Obsidian plugin that allows you to upload your notes to a Wiki.js instance th
 2. Open BRAT settings and click **"Add Beta plugin"**
 3. Enter the repository URL: `https://github.com/Pachinko0/wikijs-sync.git`
 4. Click **"Add Plugin"** – BRAT will download and install it automatically
-5. Enable **Note to Wiki.js** in Obsidian Settings > Community Plugins
+5. Enable **Wikijs-Sync** in Obsidian Settings > Community Plugins
 
 BRAT keeps the plugin up to date automatically whenever a new release is published.
 
@@ -55,7 +55,7 @@ BRAT keeps the plugin up to date automatically whenever a new release is publish
 
 ## Configuration
 
-Open Obsidian Settings > Community Plugins > Note to Wiki.js to configure:
+Open Obsidian Settings > Community Plugins > Wikijs-Sync to configure:
 
 ### Required Settings
 
@@ -180,8 +180,6 @@ Ensure your Wiki.js API token has the following permissions:
 
 1. Verify your Wiki.js URL is correct and accessible
 2. Check that your API token is valid and has the required permissions
-3. Use the "Test connection" button in settings to verify connectivity
-4. Ensure GraphQL API is enabled in Wiki.js
 
 ### Upload Failures
 
@@ -205,7 +203,7 @@ See [DEVELOPMENT.md](./DEVELOPMENT.md) for detailed development setup, including
 ### Quick Development Setup
 
 1. Clone repository and run `npm install`
-2. Create symlink: `ln -s /path/to/vault/.obsidian/plugins/note-to-wikijs dist`
+2. Create symlink: `ln -s /path/to/vault/.obsidian/plugins/wikijs-sync dist`
 3. Run `npm run dev` for development build with watch mode
 4. Install and enable Hot Reload plugin in Obsidian
 5. Make changes – ESBuild rebuilds automatically, Hot Reload reloads plugin

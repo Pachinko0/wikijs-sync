@@ -1,7 +1,7 @@
 {
-  "name": "note-to-wikijs",
-  "version": "1.0.0",
-  "description": "Obsidian plugin to upload notes to Wiki.js",
+  "name": "wikijs-sync",
+  "version": "1.1.0",
+  "description": "Obsidian plugin to sync notes with Wiki.js",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -13,9 +13,10 @@
     "wikijs",
     "plugin",
     "markdown",
-    "upload"
+    "upload",
+    "sync"
   ],
-  "author": "Your Name",
+  "author": "Pachinko0",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^16.11.6",

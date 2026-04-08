@@ -141,6 +141,7 @@ The plugin automatically converts Obsidian-specific syntax to be compatible with
 - `[[Internal Link]]` → `[Internal Link](/en/full/path/to/internal-link)` (includes locale and folder structure)
 - `[[Internal Link|Display Text]]` → `[Display Text](/en/full/path/to/internal-link)`
 - `[[Page#heading]]` → `[Page#heading](/en/path/page#heading)` (anchors preserved)
+- Original wikilinks are preserved as HTML comments for bidirectional sync: `[[Page]]` → `[Page](/en/page) <!-- [[Page]] -->`
 - Relative markdown links are converted to absolute Wiki.js paths with locale
 
 ### Images
@@ -212,7 +213,13 @@ See [DEVELOPMENT.md](./DEVELOPMENT.md) for detailed development setup, including
 
 ## Changelog
 
-### 1.0.2 (Current)
+### 1.1.0 (Current)
+- Added bidirectional wikilink preservation for perfect round-trip sync
+- Original Obsidian wikilinks are preserved as HTML comments when uploading to Wiki.js
+- When syncing from Wiki.js back to Obsidian, original wikilinks are restored exactly
+- Fixes broken links and formatting when syncing complex wikilinks with spaces and paths
+
+### 1.0.2
 - Fixed folder sync conflicts and improved path normalization
 - Added folder conflict check to prevent file/folder name collisions
 - Rewrote resolveFolderPath to find best existing folder prefix

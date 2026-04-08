@@ -103,7 +103,7 @@ export class MarkdownProcessor {
 			}
 			const url = `/${locale}/${targetPath}${anchor}`;
 			console.debug('convertObsidianLinks: link=', link, 'pageRef=', pageRef, 'targetPath=', targetPath, 'url=', url);
-			return `[${text}](${url})`;
+			return `[${text}](${url}) <!-- ${match} -->`;
 		});
 	}
 
@@ -542,6 +542,10 @@ export class MarkdownProcessor {
 
 		if (!this.settings.preserveObsidianSyntax) {
 			// Revert link conversions
+			// Restore original wikilinks from HTML comments
+			processedContent = processedContent.replace(/\[([^\]]+)\]\([^)]+\)\s*<!--\s*(\[\[[^\]]+\]\])\s*-->/g, (match, text, wikilink) => {
+				return wikilink;
+			});
 			const locale = this.settings.locale || 'en';
 			const localePrefix = `/${locale}/`;
 			// Match [text](/locale/path#anchor)
